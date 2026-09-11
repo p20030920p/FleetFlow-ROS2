@@ -35,8 +35,10 @@ def _robots(context, *args, **kwargs):
 
     # 出生点：厂房左侧一列，避免叠在一起
     for i in range(n):
-        x = 1.0 + 0.55 * (i % 2)
-        y = 1.6 + 1.05 * (i // 2)
+        # 停车带：沿厂房上方一字排开。早期版本把车生成在空桶料区停靠位上，
+        # 结果车队一出场就互相堵死——出生点必须避开所有停靠位。
+        x = 3.0 + 1.0 * (i % 8)
+        y = 8.9 - 0.0 * (i // 8)
         rgb = layout.FLEET_COLORS[i % len(layout.FLEET_COLORS)]
         color = f"{rgb[0]} {rgb[1]} {rgb[2]}"
         urdf = Command(["xacro ", xacro_file, f" robot_id:={i}", f' body_color:="{color}"'])
@@ -47,11 +49,21 @@ def _robots(context, *args, **kwargs):
                            "-x", str(x), "-y", str(y), "-z", "0.08"],
             )
         )
+        # 每车一个 robot_state_publisher，frame_prefix 让 TF 帧互不冲突
+        actions.append(
+            Node(
+                package="robot_state_publisher", executable="robot_state_publisher",
+                name="robot_state_publisher", namespace=f"robot_{i}", output="log",
+                parameters=[dict(robot_description=urdf, frame_prefix=f"robot_{i}/",
+                                 use_sim_time=use_sim_time)],
+            )
+        )
         actions.append(
             Node(
                 package=PKG, executable="robot_controller", name="robot_controller",
                 namespace=f"robot_{i}", output="screen",
                 parameters=[dict(robot_id=i, start_x=x, start_y=y,
+                                  battery_drain_per_m=float(LaunchConfiguration("battery_drain").perform(context)),
                                  use_sim_time=use_sim_time)],
             )
         )
@@ -90,6 +102,7 @@ def generate_launch_description():
             f"/robot_{i}/odom@nav_msgs/msg/Odometry@gz.msgs.Odometry",
             f"/robot_{i}/scan@sensor_msgs/msg/LaserScan@gz.msgs.LaserScan",
             f"/robot_{i}/tf@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V",
+            f"/robot_{i}/joint_states@sensor_msgs/msg/JointState@gz.msgs.Model",
         ]
     bridge = Node(
         package="ros_gz_bridge", executable="parameter_bridge",
@@ -100,9 +113,19 @@ def generate_launch_description():
     core = [
         Node(package=PKG, executable="factory_manager", name="factory_manager", output="screen",
              parameters=[dict(num_materials=LaunchConfiguration("num_materials"),
+                              max_tasks_in_flight=LaunchConfiguration("max_tasks_in_flight"),
                               use_sim_time=use_sim_time)]),
-        Node(package=PKG, executable="task_scheduler", name="task_scheduler", output="screen",
+        Node(package=PKG, executable="traffic_manager", name="traffic_manager", output="screen",
              parameters=[dict(use_sim_time=use_sim_time)]),
+        Node(package=PKG, executable="task_scheduler", name="task_scheduler", output="screen",
+             parameters=[dict(policy=LaunchConfiguration("policy"),
+                              seed=LaunchConfiguration("seed"),
+                              use_sim_time=use_sim_time)]),
+        Node(package=PKG, executable="metrics", name="metrics_recorder", output="screen",
+             parameters=[dict(out_dir=LaunchConfiguration("metrics_dir"),
+                              policy=LaunchConfiguration("policy"),
+                              run_label=LaunchConfiguration("run_label"),
+                              use_sim_time=use_sim_time)]),
         Node(package=PKG, executable="dashboard", name="fleet_dashboard", output="screen",
              parameters=[dict(out_dir=LaunchConfiguration("out_dir"),
                               every_s=LaunchConfiguration("frame_every"),
@@ -113,10 +136,16 @@ def generate_launch_description():
         DeclareLaunchArgument("headless", default_value="true"),
         DeclareLaunchArgument("gui", default_value="false"),
         DeclareLaunchArgument("num_robots", default_value="4"),
+        DeclareLaunchArgument("max_tasks_in_flight", default_value="6"),
         DeclareLaunchArgument("num_materials", default_value="12"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("out_dir", default_value="/tmp/fleetflow_frames"),
         DeclareLaunchArgument("frame_every", default_value="3.0"),
+        DeclareLaunchArgument("battery_drain", default_value="0.55"),
+        DeclareLaunchArgument("policy", default_value="nearest"),
+        DeclareLaunchArgument("seed", default_value="7"),
+        DeclareLaunchArgument("run_label", default_value="gazebo"),
+        DeclareLaunchArgument("metrics_dir", default_value="/tmp/fleetflow_metrics"),
         gz, gz_gui, bridge,
         *core,
         OpaqueFunction(function=_robots),

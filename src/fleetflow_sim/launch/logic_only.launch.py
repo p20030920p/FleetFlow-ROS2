@@ -1,21 +1,20 @@
-"""纯逻辑模式：不启动 Gazebo，只跑调度与车队（控制器自行积分运动学）。
+"""纯逻辑模式：不启动 Gazebo，只跑调度 / 交通 / 车队 / 指标。
 
 用途
 ----
-* 在没有仿真器 / GPU 的机器上验证调度逻辑（CI 友好）
-* 低成本批量出态势图
+* 在没有仿真器或 GPU 的机器上验证多机逻辑（CI 友好）
+* 跑分配策略对比实验：Gazebo 渲染一帧的成本远高于调度本身，
+  做 3 组 × 多轮对比时用它可以把单轮时间从分钟级压到几十秒
 
-    ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 seconds:=60
+    ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi \\
+        seconds:=120 out_dir:=/tmp/exp_ssi
 """
 from __future__ import annotations
 
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-
-from fleetflow_sim import layout
 
 PKG = "fleetflow_sim"
 
@@ -23,22 +22,40 @@ PKG = "fleetflow_sim"
 def _spawn(context, *args, **kwargs):
     n = int(LaunchConfiguration("num_robots").perform(context))
     out_dir = LaunchConfiguration("out_dir").perform(context)
-    every = LaunchConfiguration("frame_every").perform(context)
-    materials = LaunchConfiguration("num_materials").perform(context)
+    every = float(LaunchConfiguration("frame_every").perform(context))
+    materials = int(LaunchConfiguration("num_materials").perform(context))
+    policy = LaunchConfiguration("policy").perform(context)
+    label = LaunchConfiguration("run_label").perform(context)
+    metrics_dir = LaunchConfiguration("metrics_dir").perform(context)
+    seed = int(LaunchConfiguration("seed").perform(context))
+    no_dash = LaunchConfiguration("dashboard").perform(context).lower() == "true"
+
     actions = [
         Node(package=PKG, executable="factory_manager", name="factory_manager", output="screen",
-             parameters=[dict(num_materials=int(materials))]),
-        Node(package=PKG, executable="task_scheduler", name="task_scheduler", output="screen"),
-        Node(package=PKG, executable="dashboard", name="fleet_dashboard", output="screen",
-             parameters=[dict(out_dir=out_dir, every_s=float(every))]),
+             parameters=[dict(num_materials=materials,
+                              max_tasks_in_flight=int(LaunchConfiguration("max_tasks_in_flight").perform(context)))]),
+        Node(package=PKG, executable="traffic_manager", name="traffic_manager", output="screen"),
+        Node(package=PKG, executable="task_scheduler", name="task_scheduler", output="screen",
+             parameters=[dict(policy=policy, seed=seed)]),
+        Node(package=PKG, executable="metrics", name="metrics_recorder", output="screen",
+             parameters=[dict(out_dir=metrics_dir, policy=policy, run_label=label,
+                              num_robots=n)]),
     ]
+    if no_dash:
+        actions.append(
+            Node(package=PKG, executable="dashboard", name="fleet_dashboard", output="screen",
+                 parameters=[dict(out_dir=out_dir, every_s=every)])
+        )
     for i in range(n):
-        x = 1.0 + 0.55 * (i % 2)
-        y = 1.6 + 1.05 * (i // 2)
+        # 停车带：沿厂房上方一字排开。早期版本把车生成在空桶料区停靠位上，
+        # 结果车队一出场就互相堵死——出生点必须避开所有停靠位。
+        x = 3.0 + 1.0 * (i % 8)
+        y = 8.9 - 0.0 * (i // 8)
         actions.append(
             Node(package=PKG, executable="robot_controller", name="robot_controller",
                  namespace=f"robot_{i}", output="screen",
                  parameters=[dict(robot_id=i, start_x=x, start_y=y,
+                                  battery_drain_per_m=float(LaunchConfiguration("battery_drain").perform(context)),
                                   use_internal_kinematics=True)])
         )
     return actions
@@ -47,8 +64,15 @@ def _spawn(context, *args, **kwargs):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("num_robots", default_value="8"),
+        DeclareLaunchArgument("max_tasks_in_flight", default_value="6"),
         DeclareLaunchArgument("num_materials", default_value="12"),
+        DeclareLaunchArgument("battery_drain", default_value="0.55"),
+        DeclareLaunchArgument("policy", default_value="nearest"),
+        DeclareLaunchArgument("seed", default_value="7"),
+        DeclareLaunchArgument("run_label", default_value="logic"),
         DeclareLaunchArgument("out_dir", default_value="/tmp/fleetflow_frames"),
+        DeclareLaunchArgument("metrics_dir", default_value="/tmp/fleetflow_metrics"),
         DeclareLaunchArgument("frame_every", default_value="2.0"),
+        DeclareLaunchArgument("dashboard", default_value="true"),
         OpaqueFunction(function=_spawn),
     ])

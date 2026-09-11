@@ -4,3 +4,5 @@ log/
 __pycache__/
 *.pyc
 .pytest_cache/
+experiments/**/frames/
+experiments/**/launch.log

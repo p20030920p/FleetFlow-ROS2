@@ -1,0 +1,5 @@
+# 释放租约（离开工位时调用）
+int32 robot_id
+string resource
+---
+bool ok

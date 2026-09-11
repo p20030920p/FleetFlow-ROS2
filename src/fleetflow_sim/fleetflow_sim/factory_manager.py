@@ -82,6 +82,8 @@ class FactoryManager(Node):
                     st = layout.station(s["name"], kind, lane)
                     self.stations[st["name"]] = Station(st["name"], st["x"], st["y"])
 
+        for name, pt in layout.STORAGE_SLOT_POINTS.items():
+            self.stations[name] = Station(name, pt["x"], pt["y"])
         self.machines = [Machine(s, lane) for s in layout.STAGES for lane in range(len(s["lanes"]))]
 
         n = int(self.get_parameter("num_materials").value)
@@ -105,6 +107,7 @@ class FactoryManager(Node):
 
         hz = float(self.get_parameter("tick_hz").value)
         self.create_timer(1.0 / hz, self.tick)
+        self.create_timer(2.0, self.reannounce)      # 周期性重播待认领任务
         self.create_timer(0.5, self.publish_summary)
         self.get_logger().info(
             f"factory_manager up · {len(self.materials)} units · {len(self.machines)} machines"
@@ -134,11 +137,13 @@ class FactoryManager(Node):
             if src.reserved == task.task_id:
                 src.reserved = None
         if dst is not None:
-            dst.material = mid
+            # 停靠位是"临时泊位"，不驻留物料，否则这个位会被永久占用
+            if "_slot_" not in dst.name:
+                dst.material = mid
             dst.reserved = None
         mat = self.materials.get(mid)
         if mat is not None:
-            if task.dest_name.startswith("storage_"):
+            if task.dest_name.startswith("storage_red"):
                 # 进入成品/红料区视为完工
                 self.materials.pop(mid, None)
                 self.completed += 1
@@ -194,15 +199,17 @@ class FactoryManager(Node):
         limit = int(self.get_parameter("max_tasks_in_flight").value)
 
         # 1) 空桶区 → 梳棉等料位
+        #    取货点不再是料区中心，而是环绕料区的空闲停靠位，避免所有车挤同一个点
         for mid, mat in list(self.materials.items()):
             if self.in_flight >= limit:
                 return
             if mat.where != "storage_empty":
                 continue
-            slot = self._free_slot("carding_waiting_")
-            if slot is None:
+            dock = self._free_slot("storage_empty_slot_")
+            dst = self._free_slot("carding_waiting_")
+            if dock is None or dst is None:
                 continue
-            self._emit_task(mid, self.stations["storage_empty"], slot)
+            self._emit_task(mid, dock, dst)
 
         # 2) 某段完工位 → 下一段等料位；最后一段 → 红料区
         for mat in list(self.materials.values()):
@@ -214,10 +221,22 @@ class FactoryManager(Node):
             stage_name = src.name.split("_finished_")[0]
             names = [s["name"] for s in layout.STAGES]
             i = names.index(stage_name)
-            dst = self._free_slot(f"{names[i+1]}_waiting_") if i + 1 < len(names) else self._free_slot("storage_red")
+            dst = (self._free_slot(f"{names[i+1]}_waiting_") if i + 1 < len(names)
+                   else self._free_slot("storage_red_slot_"))
             if dst is None:
                 continue
             self._emit_task(mat.mid, src, dst)
+
+    def reannounce(self):
+        """真实车队里任务公告是周期性的；这里重播所有 status=pending 的任务，
+        使晚启动的订阅者也能拿到，避免"公告早于订阅"造成的任务丢失。"""
+        n = 0
+        for t in self.tasks.values():
+            if t.status == "pending":
+                self.pub_task.publish(t)
+                n += 1
+        if n:
+            self.get_logger().debug(f"re-announced {n} pending tasks")
 
     def _emit_task(self, mid, src, dst):
         # 物料到达目标工位后的颜色 = 该工位所属工序填装后的状态

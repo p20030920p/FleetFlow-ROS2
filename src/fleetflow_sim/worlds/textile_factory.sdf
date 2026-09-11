@@ -204,5 +204,15 @@
         <always_on>1</always_on><update_rate>30</update_rate><visualize>false</visualize>
         <topic>view_line/image</topic></sensor></link>
     </model>
+    <model name="charger_0">
+      <static>true</static><pose>0.9 5.0 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.45</radius><length>0.03</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.45</radius><length>0.03</length></cylinder></geometry><material><ambient>0.100 0.600 0.850 1.0</ambient><diffuse>0.100 0.600 0.850 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="charger_1">
+      <static>true</static><pose>15.1 5.0 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.45</radius><length>0.03</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.45</radius><length>0.03</length></cylinder></geometry><material><ambient>0.100 0.600 0.850 1.0</ambient><diffuse>0.100 0.600 0.850 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
   </world>
 </sdf>

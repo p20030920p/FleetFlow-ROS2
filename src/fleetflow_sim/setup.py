@@ -29,6 +29,8 @@ setup(
             "task_scheduler = fleetflow_sim.task_scheduler:main",
             "robot_controller = fleetflow_sim.robot_controller:main",
             "dashboard = fleetflow_sim.dashboard:main",
+            "traffic_manager = fleetflow_sim.traffic_manager:main",
+            "metrics = fleetflow_sim.metrics:main",
         ],
     },
 )

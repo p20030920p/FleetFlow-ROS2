@@ -5,7 +5,7 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/TransportTask.msg" "msg/MachineState.msg" "msg/RobotStatus.msg"
-  "srv/RequestTask.srv"
+  "srv/RequestTask.srv" "srv/AcquireLease.srv" "srv/ReleaseLease.srv"
   DEPENDENCIES std_msgs
 )
 ament_export_dependencies(rosidl_default_runtime)

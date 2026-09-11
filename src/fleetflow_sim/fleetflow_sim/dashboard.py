@@ -189,6 +189,17 @@ class Dashboard(Node):
                                 edgecolor="none", alpha=0.95, zorder=1))
             ax.text(z["x"], z["y"], k.upper(), color="#20262c", fontsize=7.2,
                     ha="center", va="center", zorder=4, fontweight="bold")
+        # 停靠位（料区周围的泊位）与充电桩
+        for name, pt in layout.STORAGE_SLOT_POINTS.items():
+            ax.add_patch(Circle((pt["x"], pt["y"]), 0.22, facecolor="none",
+                                edgecolor="#9fb0bd", lw=0.9, linestyle=(0, (3, 2)), zorder=2))
+        for name, c in layout.CHARGERS.items():
+            ax.add_patch(Rectangle((c["x"] - 0.30, c["y"] - 0.22), 0.60, 0.44,
+                                   facecolor=c["rgb"], edgecolor="#20262c", lw=0.8,
+                                   zorder=3, alpha=0.9))
+            ax.text(c["x"], c["y"], "CHG", color="#ffffff", fontsize=6.0,
+                    ha="center", va="center", zorder=4, fontweight="bold")
+
         # 工位 + 机器
         for s in layout.STAGES:
             for i, y in enumerate(s["lanes"]):
@@ -214,7 +225,9 @@ class Dashboard(Node):
                                 lw=1.2, zorder=5))
         # 车队
         state_color = dict(idle="#8d99a6", to_pickup=CYAN, to_dropoff=ACCENT,
-                           loading="#ffd166", unloading="#ffd166")
+                           loading="#ffd166", unloading="#ffd166",
+                           departing="#7ad1c8", waiting_lease="#c9a227",
+                           to_charger="#2f9e44", charging="#2f9e44")
         for rid, r in sorted(self.robots.items()):
             c = state_color.get(r.state, FG)
             ax.add_patch(Circle((r.x, r.y), 0.22, facecolor=c, edgecolor=BG, lw=1.0, zorder=6))
@@ -224,9 +237,11 @@ class Dashboard(Node):
                                     color=c, zorder=7, length_includes_head=True))
             ax.text(r.x + 0.30, r.y + 0.26, f"AGV{rid}", color="#20262c", fontsize=6.8,
                     ha="left", va="bottom", zorder=8, fontweight="bold")
-        ax.text(0.5, -0.055, "● idle    ● to pickup    ● to drop-off    ● handling        "
-                             "dashed = active transport route",
-                transform=ax.transAxes, color=MUTED, fontsize=7.6, ha="center")
+        ax.text(0.5, -0.055,
+                "● idle   ● to pickup   ● to drop-off   ● handling   ● charging / to charger   "
+                "● waiting for dock lease      dashed = active transport route   "
+                "dotted circle = dock slot",
+                transform=ax.transAxes, color=MUTED, fontsize=7.2, ha="center")
 
 
 def main():

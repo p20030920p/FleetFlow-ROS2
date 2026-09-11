@@ -1,0 +1,7 @@
+# 申请一个工位/充电桩的独占租约（交通管理）
+int32 robot_id
+string resource
+---
+bool granted
+int32 holder          # 当前持有者，-1 表示空闲
+string message

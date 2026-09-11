@@ -22,9 +22,29 @@ class Grid:
         self.x_max, self.y_max = layout.FIELD["x_max"], layout.FIELD["y_max"]
         self.nx = int(round((self.x_max - self.x_min) / res)) + 1
         self.ny = int(round((self.y_max - self.y_min) / res)) + 1
-        self.blocked = bytearray(self.nx * self.ny)
+        self.blocked = bytearray(self.nx * self.ny)      # 静态层：机器圆柱
+        self.dynamic = bytearray(self.nx * self.ny)      # 动态层：其他车辆
         for mx, my, mr in layout.machine_centers():
             self._paint_disc(mx, my, mr + inflate)
+
+    def set_dynamic(self, points, radius: float = 0.50):
+        """把当前其他车辆的位置写成动态障碍。
+
+        真实多机系统里这叫动态代价地图：路径规划时就把同伴算进去，
+        比"沿固定路径硬挤 + 局部避让"更不容易堵死。
+        """
+        self.dynamic = bytearray(self.nx * self.ny)
+        for x, y in points:
+            i0, j0 = self.to_ij(x - radius, y - radius)
+            i1, j1 = self.to_ij(x + radius, y + radius)
+            for i in range(max(0, i0), min(self.nx, i1 + 1)):
+                for j in range(max(0, j0), min(self.ny, j1 + 1)):
+                    px, py = self.to_xy(i, j)
+                    if (px - x) ** 2 + (py - y) ** 2 <= radius * radius:
+                        self.dynamic[j * self.nx + i] = 1
+
+    def clear_dynamic(self):
+        self.dynamic = bytearray(self.nx * self.ny)
 
     def _paint_disc(self, cx, cy, r):
         i0, i1 = self.to_ij(cx - r - self.res, cy - r - self.res)
@@ -42,7 +62,10 @@ class Grid:
         return (self.x_min + i * self.res, self.y_min + j * self.res)
 
     def free(self, i, j) -> bool:
-        return 0 <= i < self.nx and 0 <= j < self.ny and not self.blocked[j * self.nx + i]
+        if not (0 <= i < self.nx and 0 <= j < self.ny):
+            return False
+        k = j * self.nx + i
+        return not self.blocked[k] and not self.dynamic[k]
 
     def nearest_free(self, x, y):
         """把落在障碍里的目标点吸到最近的可行驶格。"""
@@ -180,6 +203,9 @@ class PurePursuit:
             self.idx += 1
         tx, ty = self.path[self.idx]
         if self.idx == len(self.path) - 1 and math.hypot(tx - x, ty - y) < 0.10:
+            # 到达终点：必须把自己标记为完成，否则调用方拿到的 v=0 却以为还没到，
+            # 在没有坐标目标的状态（如离站 staging）下会永久停住。
+            self.idx = len(self.path)
             return 0.0, 0.0
         dx, dy = tx - x, ty - y
         # 车体系下的横向误差

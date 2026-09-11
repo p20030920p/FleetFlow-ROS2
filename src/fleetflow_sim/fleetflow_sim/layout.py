@@ -5,6 +5,7 @@
 每段有三类工位：waiting（等料）/ machine（机器本体）/ finished（完工缓存）。
 AGV 只在 waiting 与 finished 之间搬运，从不驶入 machine 圆柱。
 """
+import math
 
 # 可行驶范围（墙内侧留出车体半径）
 FIELD = dict(x_min=0.55, x_max=15.45, y_min=0.75, y_max=9.25)
@@ -27,6 +28,47 @@ STAGES = [
     dict(name="drawing2", lanes=[2.5, 6.5],           wait_x=10.8, machine_x=11.8, done_x=12.8,
          rgb=(0.45, 0.28, 0.72), process_s=9.0),
 ]
+
+# 取货/卸货停靠位：一个料区只有一个几何中心，但真实车队不会让所有车挤同一个点，
+# 而是在料区周围划出若干停靠位（dock slot）。这里按圆周均匀分布生成。
+# 停靠位布局。空桶料区在厂房角落，整圈放不下，所以沿"朝向产线"的弧线展开；
+# 红色料区在大致空阔的右上方，用整圈即可。间距必须足够大（≈1.3 m）：
+# 间距太小会让多台车在泊位区互相堵死，这是实测踩过的坑。
+STORAGE_SLOTS = {
+    "empty": dict(radius=1.70, angles=(-20, 25, 70, 115)),
+    "red":   dict(radius=1.35, angles=(45, 135, 225, 315)),
+}
+
+
+def _slots(zone: str):
+    z = STORAGE[zone]
+    spec = STORAGE_SLOTS[zone]
+    if spec.get("angles"):
+        angles = spec["angles"]
+    else:
+        n = spec.get("count", 4)
+        angles = tuple(360.0 * i / n for i in range(n))
+    out = {}
+    for i, deg in enumerate(angles):
+        ang = math.radians(deg)
+        out[f"storage_{zone}_slot_{i}"] = dict(
+            name=f"storage_{zone}_slot_{i}",
+            x=z["x"] + spec["radius"] * math.cos(ang),
+            y=z["y"] + spec["radius"] * math.sin(ang),
+        )
+    return out
+
+
+STORAGE_SLOT_POINTS = {}
+for _z in STORAGE_SLOTS:
+    STORAGE_SLOT_POINTS.update(_slots(_z))
+
+
+# 充电桩：电量低于阈值时车辆自动回冲（真实 AGV 车队的标配行为）
+CHARGERS = {
+    "charger_0": dict(x=0.9, y=5.0, r=0.45, rgb=(0.10, 0.60, 0.85)),
+    "charger_1": dict(x=15.1, y=5.0, r=0.45, rgb=(0.10, 0.60, 0.85)),
+}
 
 # 物料随工序变色：空桶 → 绿 → 黄 → 红（与旧版控制中心图例一致）
 MATERIAL_FLOW = ["empty", "green", "yellow", "red"]
@@ -67,6 +109,8 @@ def machine_centers() -> list:
 def all_station_points() -> dict:
     """所有可停靠点的字典 {名字: (x, y)}。"""
     pts = {f"storage_{k}": (v["x"], v["y"]) for k, v in STORAGE.items()}
+    pts.update({k: (v["x"], v["y"]) for k, v in CHARGERS.items()})
+    pts.update({k: (v["x"], v["y"]) for k, v in STORAGE_SLOT_POINTS.items()})
     for s in STAGES:
         for i, _ in enumerate(s["lanes"]):
             for kind in ("waiting", "finished"):
