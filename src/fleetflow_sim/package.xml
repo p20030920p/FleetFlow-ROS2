@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>fleetflow_sim</name>
+  <version>1.0.0</version>
+  <description>Multi-AGV material transport simulation for a textile mill, on ROS 2 Jazzy and Gazebo Sim 8.</description>
+  <maintainer email="129049044+p20030920p@users.noreply.github.com">QuanQuan</maintainer>
+  <license>MIT</license>
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>fleetflow_interfaces</depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

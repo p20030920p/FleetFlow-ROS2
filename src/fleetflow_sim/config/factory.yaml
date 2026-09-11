@@ -1,0 +1,19 @@
+# FleetFlow-ROS2 运行参数（launch 里也会按需覆盖）
+factory_manager:
+  ros__parameters:
+    num_materials: 12        # 同时在产线上流转的物料件数
+    tick_hz: 10.0
+    max_tasks_in_flight: 6   # 同时在途的搬运任务上限
+
+task_scheduler:
+  ros__parameters:
+    reserve_radius: 1.6
+
+robot_controller:
+  ros__parameters:
+    dwell_s: 1.2             # 装卸停留时间
+
+fleet_dashboard:
+  ros__parameters:
+    out_dir: /tmp/fleetflow_frames
+    every_s: 3.0             # >0 时每隔这么久出一张态势图

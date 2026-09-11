@@ -1,0 +1,208 @@
+<?xml version="1.0" ?>
+<sdf version="1.10">
+  <world name="textile_factory">
+    <physics name="1ms" type="ignored"><max_step_size>0.004</max_step_size><real_time_factor>1.0</real_time_factor></physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors"><render_engine>ogre2</render_engine></plugin>
+    <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows><pose>0 0 12 0 0 0</pose>
+      <diffuse>0.92 0.92 0.92 1</diffuse><specular>0.25 0.25 0.25 1</specular><direction>-0.4 0.25 -1</direction>
+    </light>
+    <scene><ambient>0.55 0.57 0.60 1</ambient><background>0.86 0.89 0.92 1</background><shadows>false</shadows></scene>
+    <model name="floor"><static>true</static><link name="link">
+      <pose>8 5 -0.05 0 0 0</pose><collision name="c"><geometry><box><size>24 16 0.1</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>24 16 0.1</size></box></geometry><material><ambient>0.840 0.860 0.890 1.0</ambient><diffuse>0.860 0.880 0.910 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link></model>
+    <model name="empty_storage">
+      <static>true</static><pose>2.0 2.0 0.02 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.9</radius><length>0.02</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.9</radius><length>0.02</length></cylinder></geometry><material><ambient>0.620 0.660 0.700 1.0</ambient><diffuse>0.620 0.660 0.700 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="green_storage">
+      <static>true</static><pose>2.0 8.0 0.02 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.9</radius><length>0.02</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.9</radius><length>0.02</length></cylinder></geometry><material><ambient>0.200 0.720 0.360 1.0</ambient><diffuse>0.200 0.720 0.360 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="yellow_storage">
+      <static>true</static><pose>14.0 2.0 0.02 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.9</radius><length>0.02</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.9</radius><length>0.02</length></cylinder></geometry><material><ambient>0.950 0.760 0.200 1.0</ambient><diffuse>0.950 0.760 0.200 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="red_storage">
+      <static>true</static><pose>14.0 8.0 0.02 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.9</radius><length>0.02</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.9</radius><length>0.02</length></cylinder></geometry><material><ambient>0.850 0.240 0.280 1.0</ambient><diffuse>0.850 0.240 0.280 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="completed">
+      <static>true</static><pose>14.0 5.0 0.02 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.8</radius><length>0.02</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.8</radius><length>0.02</length></cylinder></geometry><material><ambient>0.980 0.600 0.120 1.0</ambient><diffuse>0.980 0.600 0.120 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="carding_waiting_0">
+      <static>true</static><pose>5.0 1.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.610 1.000 0.870 1.0</ambient><diffuse>0.610 1.000 0.870 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="carding_machine_0">
+      <static>true</static><pose>6.0 1.5 0.625 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry><material><ambient>0.160 0.620 0.420 1.0</ambient><diffuse>0.160 0.620 0.420 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="carding_finished_0">
+      <static>true</static><pose>7.0 1.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.410 0.870 0.670 1.0</ambient><diffuse>0.410 0.870 0.670 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="carding_waiting_1">
+      <static>true</static><pose>5.0 3.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.610 1.000 0.870 1.0</ambient><diffuse>0.610 1.000 0.870 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="carding_machine_1">
+      <static>true</static><pose>6.0 3.5 0.625 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry><material><ambient>0.160 0.620 0.420 1.0</ambient><diffuse>0.160 0.620 0.420 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="carding_finished_1">
+      <static>true</static><pose>7.0 3.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.410 0.870 0.670 1.0</ambient><diffuse>0.410 0.870 0.670 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="carding_waiting_2">
+      <static>true</static><pose>5.0 5.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.610 1.000 0.870 1.0</ambient><diffuse>0.610 1.000 0.870 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="carding_machine_2">
+      <static>true</static><pose>6.0 5.5 0.625 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry><material><ambient>0.160 0.620 0.420 1.0</ambient><diffuse>0.160 0.620 0.420 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="carding_finished_2">
+      <static>true</static><pose>7.0 5.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.410 0.870 0.670 1.0</ambient><diffuse>0.410 0.870 0.670 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="carding_waiting_3">
+      <static>true</static><pose>5.0 7.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.610 1.000 0.870 1.0</ambient><diffuse>0.610 1.000 0.870 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="carding_machine_3">
+      <static>true</static><pose>6.0 7.5 0.625 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry><material><ambient>0.160 0.620 0.420 1.0</ambient><diffuse>0.160 0.620 0.420 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="carding_finished_3">
+      <static>true</static><pose>7.0 7.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.410 0.870 0.670 1.0</ambient><diffuse>0.410 0.870 0.670 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="drawing1_waiting_0">
+      <static>true</static><pose>8.0 2.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.610 0.900 1.000 1.0</ambient><diffuse>0.610 0.900 1.000 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="drawing1_machine_0">
+      <static>true</static><pose>9.0 2.5 0.625 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry><material><ambient>0.160 0.450 0.780 1.0</ambient><diffuse>0.160 0.450 0.780 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="drawing1_finished_0">
+      <static>true</static><pose>10.0 2.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.410 0.700 1.000 1.0</ambient><diffuse>0.410 0.700 1.000 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="drawing1_waiting_1">
+      <static>true</static><pose>8.0 6.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.610 0.900 1.000 1.0</ambient><diffuse>0.610 0.900 1.000 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="drawing1_machine_1">
+      <static>true</static><pose>9.0 6.5 0.625 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry><material><ambient>0.160 0.450 0.780 1.0</ambient><diffuse>0.160 0.450 0.780 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="drawing1_finished_1">
+      <static>true</static><pose>10.0 6.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.410 0.700 1.000 1.0</ambient><diffuse>0.410 0.700 1.000 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="drawing2_waiting_0">
+      <static>true</static><pose>10.8 2.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.900 0.730 1.000 1.0</ambient><diffuse>0.900 0.730 1.000 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="drawing2_machine_0">
+      <static>true</static><pose>11.8 2.5 0.625 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry><material><ambient>0.450 0.280 0.720 1.0</ambient><diffuse>0.450 0.280 0.720 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="drawing2_finished_0">
+      <static>true</static><pose>12.8 2.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.700 0.530 0.970 1.0</ambient><diffuse>0.700 0.530 0.970 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="drawing2_waiting_1">
+      <static>true</static><pose>10.8 6.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.900 0.730 1.000 1.0</ambient><diffuse>0.900 0.730 1.000 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="drawing2_machine_1">
+      <static>true</static><pose>11.8 6.5 0.625 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.36</radius><length>1.25</length></cylinder></geometry><material><ambient>0.450 0.280 0.720 1.0</ambient><diffuse>0.450 0.280 0.720 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="drawing2_finished_1">
+      <static>true</static><pose>12.8 6.5 0.015 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry></collision>
+      <visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.015</length></cylinder></geometry><material><ambient>0.700 0.530 0.970 1.0</ambient><diffuse>0.700 0.530 0.970 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="wall_n">
+      <static>true</static><pose>8 0.0 0.3 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><box><size>17 0.2 0.6</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>17 0.2 0.6</size></box></geometry><material><ambient>0.780 0.800 0.830 1.0</ambient><diffuse>0.780 0.800 0.830 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="wall_s">
+      <static>true</static><pose>8 10.0 0.3 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><box><size>17 0.2 0.6</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>17 0.2 0.6</size></box></geometry><material><ambient>0.780 0.800 0.830 1.0</ambient><diffuse>0.780 0.800 0.830 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="wall_w">
+      <static>true</static><pose>-0.5 5 0.3 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><box><size>0.2 10 0.6</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>0.2 10 0.6</size></box></geometry><material><ambient>0.780 0.800 0.830 1.0</ambient><diffuse>0.780 0.800 0.830 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="wall_e">
+      <static>true</static><pose>16.5 5 0.3 0 0 0</pose>
+      <link name="link"><collision name="c"><geometry><box><size>0.2 10 0.6</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>0.2 10 0.6</size></box></geometry><material><ambient>0.780 0.800 0.830 1.0</ambient><diffuse>0.780 0.800 0.830 1.0</diffuse><specular>0.15 0.15 0.15 1</specular></material></visual></link>
+    </model>
+    <model name="view_top">
+      <static>true</static><pose>8.0 5.0 17.0 0 1.5707963267948966 0.0</pose>
+      <link name="link"><sensor name="cam" type="camera"><camera>
+        <horizontal_fov>1.25</horizontal_fov><image><width>1280</width><height>800</height></image>
+        <clip><near>0.1</near><far>200</far></clip></camera>
+        <always_on>1</always_on><update_rate>30</update_rate><visualize>false</visualize>
+        <topic>view_top/image</topic></sensor></link>
+    </model>
+    <model name="view_iso">
+      <static>true</static><pose>18.5 -5.0 6.6 0 0.44 2.4</pose>
+      <link name="link"><sensor name="cam" type="camera"><camera>
+        <horizontal_fov>1.0</horizontal_fov><image><width>1280</width><height>800</height></image>
+        <clip><near>0.1</near><far>200</far></clip></camera>
+        <always_on>1</always_on><update_rate>30</update_rate><visualize>false</visualize>
+        <topic>view_iso/image</topic></sensor></link>
+    </model>
+    <model name="view_line">
+      <static>true</static><pose>1.8 3.4 1.35 0 0.16 0.62</pose>
+      <link name="link"><sensor name="cam" type="camera"><camera>
+        <horizontal_fov>1.15</horizontal_fov><image><width>1280</width><height>800</height></image>
+        <clip><near>0.1</near><far>200</far></clip></camera>
+        <always_on>1</always_on><update_rate>30</update_rate><visualize>false</visualize>
+        <topic>view_line/image</topic></sensor></link>
+    </model>
+  </world>
+</sdf>

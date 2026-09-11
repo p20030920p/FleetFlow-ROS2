@@ -1,0 +1,8 @@
+# 空闲 AGV 向调度器拉取任务（pull 模型，避免抢占冲突）
+int32 robot_id
+float64 x
+float64 y
+---
+bool has_task
+TransportTask task
+string message

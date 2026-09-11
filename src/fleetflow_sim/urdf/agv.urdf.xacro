@@ -1,0 +1,154 @@
+<?xml version="1.0"?>
+<!-- FleetFlow-ROS2 AGV: 差速底盘 + 360° LiDAR，robot_id 决定命名空间与配色 -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="agv">
+
+  <xacro:arg name="robot_id" default="0"/>
+  <xacro:arg name="body_color" default="0.16 0.45 0.78"/>
+
+  <xacro:property name="robot_id"   value="$(arg robot_id)"/>
+  <xacro:property name="body_color" value="$(arg body_color)"/>
+
+  <!-- 尺寸: 一台能放进 16x10m 厂房、又能在截图里看清的搬运车 -->
+  <xacro:property name="body_len" value="0.56"/>
+  <xacro:property name="body_w"   value="0.44"/>
+  <xacro:property name="body_h"   value="0.14"/>
+  <xacro:property name="wheel_r"  value="0.075"/>
+  <xacro:property name="wheel_w"  value="0.045"/>
+  <xacro:property name="sep"      value="0.42"/>
+  <xacro:property name="deck_z"   value="${body_h/2 + 0.02}"/>
+
+  <link name="base_footprint"/>
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${wheel_r}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_link">
+    <visual name="body">
+      <geometry><box size="${body_len} ${body_w} ${body_h}"/></geometry>
+      <material name="body"><color rgba="${body_color} 1"/></material>
+    </visual>
+    <!-- 顶面浅色甲板，俯视时能一眼分清车体和朝向 -->
+    <visual name="deck">
+      <origin xyz="-0.06 0 ${deck_z}" rpy="0 0 0"/>
+      <geometry><box size="0.30 0.30 0.02"/></geometry>
+      <material name="deck"><color rgba="0.96 0.97 0.98 1"/></material>
+    </visual>
+    <!-- 车头标记，用于判断朝向 -->
+    <visual name="nose">
+      <origin xyz="${body_len/2 - 0.03} 0 0.01" rpy="0 0 0"/>
+      <geometry><box size="0.06 0.20 0.04"/></geometry>
+      <material name="nose"><color rgba="1.0 0.45 0.10 1"/></material>
+    </visual>
+    <collision name="body_c">
+      <geometry><box size="${body_len} ${body_w} ${body_h}"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="12.0"/>
+      <inertia ixx="0.20" ixy="0" ixz="0" iyy="0.30" iyz="0" izz="0.44"/>
+    </inertial>
+  </link>
+
+  <xacro:macro name="wheel" params="side sign">
+    <link name="${side}_wheel">
+      <visual name="v">
+        <geometry><cylinder radius="${wheel_r}" length="${wheel_w}"/></geometry>
+        <material name="tyre"><color rgba="0.12 0.13 0.15 1"/></material>
+      </visual>
+      <collision name="c">
+        <geometry><cylinder radius="${wheel_r}" length="${wheel_w}"/></geometry>
+      </collision>
+      <inertial><mass value="0.6"/><inertia ixx="0.002" ixy="0" ixz="0" iyy="0.002" iyz="0" izz="0.002"/></inertial>
+    </link>
+    <joint name="${side}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${side}_wheel"/>
+      <origin xyz="0 ${sign*sep/2} ${-body_h/2}" rpy="-1.5708 0 0"/>
+      <axis xyz="0 0 1"/>
+    </joint>
+    <!-- 轮辐，旋转时能看出车在动 -->
+    <link name="${side}_hub">
+      <visual name="v">
+        <geometry><box size="${wheel_r*1.4} 0.006 ${wheel_r*0.14}"/></geometry>
+        <material name="hub"><color rgba="0.90 0.92 0.95 1"/></material>
+      </visual>
+    </link>
+    <joint name="${side}_hub_joint" type="fixed">
+      <parent link="${side}_wheel"/>
+      <child link="${side}_hub"/>
+      <origin xyz="0 ${sign*wheel_w/2} 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:wheel side="left"  sign="1"/>
+  <xacro:wheel side="right" sign="-1"/>
+
+  <link name="caster">
+    <visual name="v"><geometry><sphere radius="0.045"/></geometry>
+      <material name="caster"><color rgba="0.35 0.37 0.40 1"/></material></visual>
+    <collision name="c"><geometry><sphere radius="0.045"/></geometry></collision>
+    <inertial><mass value="0.2"/><inertia ixx="0.0004" ixy="0" ixz="0" iyy="0.0004" iyz="0" izz="0.0004"/></inertial>
+  </link>
+  <joint name="caster_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="caster"/>
+    <origin xyz="${-body_len/2 + 0.06} 0 ${-body_h/2 - 0.03}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="lidar_link">
+    <visual name="v"><geometry><cylinder radius="0.045" length="0.05"/></geometry>
+      <material name="lidar"><color rgba="0.10 0.11 0.13 1"/></material></visual>
+    <inertial><mass value="0.15"/><inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.0002"/></inertial>
+  </link>
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="${body_len/2 - 0.10} 0 ${body_h/2 + 0.045}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============ Gazebo Sim 系统 ============ -->
+  <gazebo>
+    <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+      <wheel_separation>${sep}</wheel_separation>
+      <wheel_radius>${wheel_r}</wheel_radius>
+      <max_linear_acceleration>1.2</max_linear_acceleration>
+      <min_linear_acceleration>-2.5</min_linear_acceleration>
+      <max_angular_acceleration>2.5</max_angular_acceleration>
+      <!-- 话题必须按机器人加命名空间，否则多台车会共用 /odom /cmd_vel 互相串指令 -->
+      <odom_topic>/robot_$(arg robot_id)/odom</odom_topic>
+      <tf_topic>/robot_$(arg robot_id)/tf</tf_topic>
+      <topic>/robot_$(arg robot_id)/cmd_vel</topic>
+    </plugin>
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+      <topic>/robot_$(arg robot_id)/joint_states</topic>
+    </plugin>
+  </gazebo>
+
+  <gazebo reference="lidar_link">
+    <sensor name="lidar" type="gpu_lidar">
+      <topic>/robot_$(arg robot_id)/scan</topic>
+      <update_rate>8</update_rate>
+      <always_on>1</always_on>
+      <visualize>false</visualize>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>180</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+        </scan>
+        <range><min>0.12</min><max>12.0</max><resolution>0.01</resolution></range>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+  <gazebo reference="base_link"><material>Gazebo/FlatBlack</material></gazebo>
+  <gazebo reference="left_wheel"><material>Gazebo/Black</material></gazebo>
+  <gazebo reference="right_wheel"><material>Gazebo/Black</material></gazebo>
+</robot>
