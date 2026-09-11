@@ -56,6 +56,7 @@ def _spawn(context, *args, **kwargs):
                  namespace=f"robot_{i}", output="screen",
                  parameters=[dict(robot_id=i, start_x=x, start_y=y,
                                   battery_drain_per_m=float(LaunchConfiguration("battery_drain").perform(context)),
+                                  stuck_timeout_s=float(LaunchConfiguration("stuck_timeout").perform(context)),
                                   use_internal_kinematics=True)])
         )
     return actions
@@ -66,6 +67,7 @@ def generate_launch_description():
         DeclareLaunchArgument("num_robots", default_value="8"),
         DeclareLaunchArgument("max_tasks_in_flight", default_value="6"),
         DeclareLaunchArgument("num_materials", default_value="12"),
+        DeclareLaunchArgument("stuck_timeout", default_value="10.0"),
         DeclareLaunchArgument("battery_drain", default_value="0.55"),
         DeclareLaunchArgument("policy", default_value="nearest"),
         DeclareLaunchArgument("seed", default_value="7"),

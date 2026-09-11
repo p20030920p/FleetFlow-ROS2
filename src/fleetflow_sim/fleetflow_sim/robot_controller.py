@@ -72,7 +72,7 @@ class RobotController(Node):
         self.declare_parameter("avoid_slow_m", 1.30)
         self.declare_parameter("avoid_stop_m", 0.60)
         self.declare_parameter("scan_stop_m", 0.38)
-        self.declare_parameter("stuck_timeout_s", 7.0)
+        self.declare_parameter("stuck_timeout_s", 10.0)
         # 电量
         self.declare_parameter("battery_drain_per_m", 0.55)
         self.declare_parameter("battery_low_pct", 30.0)

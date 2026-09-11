@@ -20,6 +20,7 @@ from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 from fleetflow_sim import layout
 
@@ -54,7 +55,8 @@ def _robots(context, *args, **kwargs):
             Node(
                 package="robot_state_publisher", executable="robot_state_publisher",
                 name="robot_state_publisher", namespace=f"robot_{i}", output="log",
-                parameters=[dict(robot_description=urdf, frame_prefix=f"robot_{i}/",
+                parameters=[dict(robot_description=ParameterValue(urdf, value_type=str),
+                                 frame_prefix=f"robot_{i}/",
                                  use_sim_time=use_sim_time)],
             )
         )
@@ -64,6 +66,7 @@ def _robots(context, *args, **kwargs):
                 namespace=f"robot_{i}", output="screen",
                 parameters=[dict(robot_id=i, start_x=x, start_y=y,
                                   battery_drain_per_m=float(LaunchConfiguration("battery_drain").perform(context)),
+                                  stuck_timeout_s=float(LaunchConfiguration("stuck_timeout").perform(context)),
                                  use_sim_time=use_sim_time)],
             )
         )
@@ -141,6 +144,7 @@ def generate_launch_description():
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("out_dir", default_value="/tmp/fleetflow_frames"),
         DeclareLaunchArgument("frame_every", default_value="3.0"),
+        DeclareLaunchArgument("stuck_timeout", default_value="10.0"),
         DeclareLaunchArgument("battery_drain", default_value="0.55"),
         DeclareLaunchArgument("policy", default_value="nearest"),
         DeclareLaunchArgument("seed", default_value="7"),

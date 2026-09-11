@@ -237,3 +237,13 @@ FleetFlow-ROS2/
 - Battery parameters are tuned so a charging cycle is observable inside a short run. Real
   AGVs manage far more distance per charge; the model is a behaviour demonstration, not an
   energy study.
+
+## A note on where the numbers come from
+
+The coordination stack is identical in both launch modes, but the measurements above are
+taken with `logic_only.launch.py`. Under Gazebo the renderer holds the real-time factor
+below 1 on a machine without a discrete GPU, so every wall-clock metric — throughput,
+latency, watchdog timeouts — is scaled by a factor that has nothing to do with the
+allocation policy. Running the comparison headless keeps the variable being tested as the
+only variable. Gazebo is still the reference for everything physical: contact, odometry,
+LiDAR, and the screenshots at the top of this page.
