@@ -375,9 +375,10 @@ FleetFlow-ROS2/
   busy state, and a lost completion message leaves a vehicle permanently "busy" — which is
   exactly the bug that motivated this design. Pull makes that failure mode impossible, and a
   heartbeat watchdog covers the remaining case where a vehicle stops responding.
-- Allocation is myopic: cost is travel distance to pickup, with no lookahead over future
-  tasks or congestion. Adding congestion-aware or auction-with-sequencing costs is the
-  obvious next step.
+- `ca_ssi` prices the congestion it can *see* — vehicles already en route to a station. It
+  still has no lookahead over tasks that have not been created yet, and it assigns one task
+  at a time rather than planning a route of several. Auction-with-sequencing over a rolling
+  horizon is the obvious next step.
 - `logic_only.launch.py` runs the whole coordination stack without Gazebo, which is how the
   policy comparison is reproduced in reasonable time. Odometry is integrated locally in that
   mode; the coordination logic is identical.
@@ -388,9 +389,14 @@ FleetFlow-ROS2/
 ## A note on where the numbers come from
 
 The coordination stack is identical in both launch modes, but the measurements above are
-taken with `logic_only.launch.py`. Under Gazebo the renderer holds the real-time factor
-below 1 on a machine without a discrete GPU, so every wall-clock metric — throughput,
-latency, watchdog timeouts — is scaled by a factor that has nothing to do with the
-allocation policy. Running the comparison headless keeps the variable being tested as the
-only variable. Gazebo is still the reference for everything physical: contact, odometry,
-LiDAR, and the screenshots at the top of this page.
+taken with `logic_only.launch.py`. Under Gazebo the renderer holds the real-time factor well
+below 1 on a machine without a discrete GPU — the 525-model world plus four always-on camera
+sensors is enough to stall a 200 s wall-clock run before a single delivery completes, even
+though tasks are created, assigned and driven with zero errors. Every wall-clock metric —
+throughput, latency, watchdog timeouts — would then be scaled by a factor that has nothing
+to do with the allocation policy. Running the comparison headless keeps the variable being
+tested as the only variable.
+
+Gazebo is still the reference for everything physical: contact, odometry, LiDAR, the
+multi-robot spawn and TF layout, and the screenshots at the top of this page. If you want to
+run the full stack interactively, lower `num_robots` and expect slow motion.
