@@ -422,5 +422,5 @@ to do with the allocation policy. Running the comparison headless keeps the vari
 tested as the only variable.
 
 Gazebo is still the reference for everything physical: contact, odometry, LiDAR, the
-multi-robot spawn and TF layout, and the screenshots at the top of this page. If you want to
+multi-robot spawn and TF layout, and the renders in *The mill* above. If you want to
 run the full stack interactively, lower `num_robots` and expect slow motion.
