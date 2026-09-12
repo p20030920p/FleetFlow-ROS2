@@ -7,19 +7,62 @@
 **纺织厂多 AGV 物料搬运仿真** · ROS 2 Jazzy + Gazebo Sim 8
 
 <p align="center">
-  <img src="./assets/readme/control-center.png" width="100%" alt="FleetFlow 生产调度看板：KPI 带、物料流转条、工程制图风格的车间平面图（含 AGV 与停靠位）、设备利用率、机台状态与车辆状态表">
-</p>
-
-多台 AGV 在梳棉、并条、粗纱机器之间搬运物料桶。调度器按策略派发运输任务，每台车自己规划路径并执行，车间生产看板按真实工厂的方式显示车队状态、机台状态与各工序进度。
-
-<p align="center">
   <img src="https://img.shields.io/badge/ROS%202-Jazzy-22314E?logo=ros&logoColor=white" alt="ROS 2 Jazzy">
   <img src="https://img.shields.io/badge/Gazebo%20Sim-8-orange" alt="Gazebo Sim 8">
   <img src="https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&logoColor=white" alt="Ubuntu 24.04">
   <img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12">
 </p>
 
-## 效果图
+<p align="center">
+  <img src="./assets/readme/demo.gif" width="100%" alt="一次完整搬运循环：任务以空心方框出现，调度器逐单派车，车辆驶向取货位、送达卸货位，完成数上升，物料流转计数从空筒推进到生条、熟条、粗纱成品">
+</p>
+
+<p align="center">
+  <sub><b>一次完整循环：从发放任务到送达。</b>任务出现 · 拍卖派车 · 车辆行驶与停靠 · 计数推进。
+  画面取自真实运行，6 倍速播放。</sub>
+</p>
+
+多台 AGV 在梳棉、并条、粗纱机器之间搬运物料桶。调度器按策略派发运输任务，每台车自己规划
+路径并执行，车间生产看板按真实工厂的方式显示车队状态、机台状态与各工序进度。
+
+## 快速开始
+
+```bash
+mkdir -p ~/ros2_ws/src && cd ~/ros2_ws/src
+git clone https://github.com/p20030920p/FleetFlow-ROS2.git
+cd ~/ros2_ws
+colcon build --symlink-install
+source install/setup.bash
+
+# 完整仿真（Gazebo 无头运行，每 3 秒输出一帧生产看板）
+ros2 launch fleetflow_sim factory.launch.py
+
+# 想开 Gazebo 界面
+ros2 launch fleetflow_sim factory.launch.py headless:=false gui:=true
+
+# 只跑调度逻辑：不启 Gazebo、不需要 GPU。CI 和下面的实验用的就是它
+ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi
+```
+
+### 抓取机位图
+
+相机话题**默认不桥接**，这个默认值是刻意的：`ros_gz_bridge` 桥接 `sensor_msgs/Image`
+时，一旦订阅端跟不上，图像缓冲会持续增长 —— 实测涨到 **约 5 GB RSS**，足以触发 OOM
+killer 把机器打挂。所以相机跑在 2 Hz，并且一次只桥接一路，只在真的需要出图时才开：
+
+```bash
+ros2 launch fleetflow_sim factory.launch.py bridge_cameras:=true   # 显式打开
+# 另开一个终端：只桥一路，订阅端 best-effort/depth-1，抓完就杀掉桥接
+ros2 run ros_gz_bridge parameter_bridge \
+    "/view_iso/image@sensor_msgs/msg/Image@gz.msgs.Image" &
+python3 tools/capture_views.py /tmp/shots /view_iso/image
+kill %1
+```
+
+`tools/capture_views.py` 用 `BEST_EFFORT` + `depth=1` 订阅，也是同一个原因：
+它只要最新的一帧，队列再深就是泄漏。
+
+## 车间
 
 <p align="center">
   <img src="./assets/readme/gazebo-iso.png" width="49%" alt="Gazebo 棉纺车间的 3/4 剖视：梳棉/并条/粗纱机弄、两侧条筒货架、架空巡回清洁轨道">
@@ -27,6 +70,16 @@
   <img src="./assets/readme/gazebo-line.png" width="49%" alt="沿产线的低角度视角，AGV 在梳棉机之间">
   <img src="./assets/readme/gazebo-machine.png" width="49%" alt="梳棉机近景：控制面板、防护罩与警示标线">
 </p>
+
+## 生产看板
+
+<p align="center">
+  <img src="./assets/readme/control-center.png" width="100%" alt="FleetFlow 生产调度看板：KPI 带、物料流转条、工程制图风格的车间平面图（含 AGV 与停靠位）、设备利用率、机台状态与车辆状态表">
+</p>
+
+每次运行还会渲染一块**班组生产看板** —— 也就是车间真正会盯着看的那块屏：物料流转条、
+工程制图风格的车间平面图、带 100% 参考线的设备利用率，以及逐台的车辆状态表。
+它就是一个普通的 matplotlib 节点，可以无头运行、定时出图。
 
 ## 实际跑起来的东西
 
@@ -106,22 +159,6 @@ J(r,t) = α·‖p_r − s_t‖                    ① 空驶
 
 拍卖主循环只有三行：给所有 `(r,t)` 打分 → 取全局 argmin 成交 → 双方出池 → 重复。
 每一轮代价 `O(|R|·|T|)`，在本规模下是微秒级 —— 整个调度器比一次激光扫描还便宜。
-
-## 车队是怎么被度量的
-
-每次运行都会增量写出两个 CSV（`tasks.csv`、`run.csv`），中途被 kill 也不会丢数据。
-
-| 指标 | 定义 |
-| --- | --- |
-| **makespan** | 最后一次送达 − 第一次派单 |
-| **吞吐** | 每分钟完成任务数 |
-| **任务时延** | 送达 − 生成，报告均值 / p50 / p95 |
-| **车队利用率** | 每台车处于"行驶或装卸"的时间占比 |
-| **总行驶里程** | 里程计位移求和 |
-| **近距事件** | 任意两车距离小于 0.55 m 的上升沿次数 |
-| **最小车距** | 任意两车最近距离 —— 安全性的直接证据 |
-| **租约拒绝 / 过期** | 交通竞争压力与 TTL 回收次数 |
-| **reassignment** | 因卡死或失联被回收的任务数 |
 
 ## 实验结果
 
@@ -228,43 +265,6 @@ J(r,t) = α·‖p_r − s_t‖                    ① 空驶
 由一条命令、固定种子、有文档的台架产出。每个策略只有十行。
 预期的用法就是：有人把 `ca_ssi` 换成自己的代价函数，重跑 `tools/run_experiments.py`，然后看结果。
 
-## 快速开始
-
-```bash
-mkdir -p ~/ros2_ws/src && cd ~/ros2_ws/src
-git clone https://github.com/p20030920p/FleetFlow-ROS2.git
-cd ~/ros2_ws
-colcon build --symlink-install
-source install/setup.bash
-
-# 完整仿真（Gazebo 无头运行，每 3 秒输出一帧生产看板）
-ros2 launch fleetflow_sim factory.launch.py
-
-# 想开 Gazebo 界面
-ros2 launch fleetflow_sim factory.launch.py headless:=false gui:=true
-
-# 只跑调度逻辑：不启 Gazebo、不需要 GPU。CI 和下面的实验用的就是它
-ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi
-```
-
-### 抓取机位图
-
-相机话题**默认不桥接**，这个默认值是刻意的：`ros_gz_bridge` 桥接 `sensor_msgs/Image`
-时，一旦订阅端跟不上，图像缓冲会持续增长 —— 实测涨到 **约 5 GB RSS**，足以触发 OOM
-killer 把机器打挂。所以相机跑在 2 Hz，并且一次只桥接一路，只在真的需要出图时才开：
-
-```bash
-ros2 launch fleetflow_sim factory.launch.py bridge_cameras:=true   # 显式打开
-# 另开一个终端：只桥一路，订阅端 best-effort/depth-1，抓完就杀掉桥接
-ros2 run ros_gz_bridge parameter_bridge \
-    "/view_iso/image@sensor_msgs/msg/Image@gz.msgs.Image" &
-python3 tools/capture_views.py /tmp/shots /view_iso/image
-kill %1
-```
-
-`tools/capture_views.py` 用 `BEST_EFFORT` + `depth=1` 订阅，也是同一个原因：
-它只要最新的一帧，队列再深就是泄漏。
-
 ## 复现这组对比实验
 
 ```bash
@@ -294,6 +294,22 @@ python3 tools/update_readme_numbers.py \
 
 每个 `(策略, 种子)` 组合在独立目录里跑一次，随机种子固定，因此策略本身与平局打破都可复现。
 上表背后的原始 CSV 已提交在 `experiments/` 下，不重跑也能核对数字。
+
+## 车队是怎么被度量的
+
+每次运行都会增量写出两个 CSV（`tasks.csv`、`run.csv`），中途被 kill 也不会丢数据。
+
+| 指标 | 定义 |
+| --- | --- |
+| **makespan** | 最后一次送达 − 第一次派单 |
+| **吞吐** | 每分钟完成任务数 |
+| **任务时延** | 送达 − 生成，报告均值 / p50 / p95 |
+| **车队利用率** | 每台车处于"行驶或装卸"的时间占比 |
+| **总行驶里程** | 里程计位移求和 |
+| **近距事件** | 任意两车距离小于 0.55 m 的上升沿次数 |
+| **最小车距** | 任意两车最近距离 —— 安全性的直接证据 |
+| **租约拒绝 / 过期** | 交通竞争压力与 TTL 回收次数 |
+| **reassignment** | 因卡死或失联被回收的任务数 |
 
 ## 接口
 
