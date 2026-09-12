@@ -1,2 +1,0 @@
-run_label,policy,num_robots,wall_s,makespan_s,completed,throughput_per_min,latency_mean_s,latency_p50_s,latency_p95_s,utilisation_mean,distance_total_m,traffic_rejected,traffic_expired,min_robot_distance_m,near_miss_events,charging_events,reassignments
-ssi_s2,ssi,8,109.0,97.201,26,14.311,15.361,14.591,20.44,0.678,256.42,0,0,0.255,5,0,1

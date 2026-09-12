@@ -22,12 +22,21 @@ class Grid:
         self.x_max, self.y_max = layout.FIELD["x_max"], layout.FIELD["y_max"]
         self.nx = int(round((self.x_max - self.x_min) / res)) + 1
         self.ny = int(round((self.y_max - self.y_min) / res)) + 1
-        self.blocked = bytearray(self.nx * self.ny)      # 静态层：机器圆柱
+        self.blocked = bytearray(self.nx * self.ny)      # 静态层：机器/货架/充电柜
         self.dynamic = bytearray(self.nx * self.ny)      # 动态层：其他车辆
-        for mx, my, mr in layout.machine_centers():
-            self._paint_disc(mx, my, mr + inflate)
+        self.inflate = inflate
+        for x0, y0, x1, y1 in layout.static_boxes():
+            self._paint_box(x0, y0, x1, y1, inflate)
 
-    def set_dynamic(self, points, radius: float = 0.50):
+    def _paint_box(self, x0, y0, x1, y1, pad):
+        """矩形障碍按车体半径外扩后写入静态层。"""
+        i0, j0 = self.to_ij(x0 - pad, y0 - pad)
+        i1, j1 = self.to_ij(x1 + pad, y1 + pad)
+        for i in range(max(0, i0), min(self.nx, i1 + 1)):
+            for j in range(max(0, j0), min(self.ny, j1 + 1)):
+                self.blocked[j * self.nx + i] = 1
+
+    def set_dynamic(self, points, radius: float = 0.45):
         """把当前其他车辆的位置写成动态障碍。
 
         真实多机系统里这叫动态代价地图：路径规划时就把同伴算进去，

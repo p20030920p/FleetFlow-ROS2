@@ -1,2 +1,0 @@
-run_label,policy,num_robots,wall_s,makespan_s,completed,throughput_per_min,latency_mean_s,latency_p50_s,latency_p95_s,utilisation_mean,distance_total_m,traffic_rejected,traffic_expired,min_robot_distance_m,near_miss_events,charging_events,reassignments
-nearest_s1,nearest,8,99.2,82.899,20,12.097,16.94,17.625,22.646,0.657,201.73,0,0,0.164,7,0,0

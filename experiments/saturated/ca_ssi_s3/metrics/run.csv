@@ -1,0 +1,2 @@
+run_label,policy,num_robots,wall_s,makespan_s,completed,throughput_per_min,latency_mean_s,latency_p50_s,latency_p95_s,utilisation_mean,distance_total_m,traffic_rejected,traffic_expired,min_robot_distance_m,near_miss_events,charging_events,reassignments
+ca_ssi_s3,ca_ssi,3,119.5,116.615,21,10.546,16.072,16.631,22.322,0.965,194.64,0,0,0.723,0,0,0

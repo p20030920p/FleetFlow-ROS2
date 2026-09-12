@@ -16,6 +16,8 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from fleetflow_sim import layout
+
 PKG = "fleetflow_sim"
 
 
@@ -47,10 +49,9 @@ def _spawn(context, *args, **kwargs):
                  parameters=[dict(out_dir=out_dir, every_s=every)])
         )
     for i in range(n):
-        # 停车带：沿厂房上方一字排开。早期版本把车生成在空桶料区停靠位上，
-        # 结果车队一出场就互相堵死——出生点必须避开所有停靠位。
-        x = 3.0 + 1.0 * (i % 8)
-        y = 8.9 - 0.0 * (i // 8)
+        # 待命区贴着下墙一字排开，避开所有取放位与生产通道
+        poses = layout.park_poses(n)
+        x, y, _yaw = poses[i]
         actions.append(
             Node(package=PKG, executable="robot_controller", name="robot_controller",
                  namespace=f"robot_{i}", output="screen",

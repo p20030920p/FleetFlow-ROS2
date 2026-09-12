@@ -36,10 +36,9 @@ def _robots(context, *args, **kwargs):
 
     # 出生点：厂房左侧一列，避免叠在一起
     for i in range(n):
-        # 停车带：沿厂房上方一字排开。早期版本把车生成在空桶料区停靠位上，
-        # 结果车队一出场就互相堵死——出生点必须避开所有停靠位。
-        x = 3.0 + 1.0 * (i % 8)
-        y = 8.9 - 0.0 * (i // 8)
+        # 待命区贴着下墙一字排开，避开所有取放位与生产通道
+        poses = layout.park_poses(n)
+        x, y, _yaw = poses[i]
         rgb = layout.FLEET_COLORS[i % len(layout.FLEET_COLORS)]
         color = f"{rgb[0]} {rgb[1]} {rgb[2]}"
         urdf = Command(["xacro ", xacro_file, f" robot_id:={i}", f' body_color:="{color}"'])
@@ -92,25 +91,29 @@ def generate_launch_description():
                             condition=IfCondition(LaunchConfiguration("gui")))
 
     # ---- 话题桥接 ----
-    bridge_topics = [
-        "/clock@rosgraph_msgs/msg/Clock@gz.msgs.Clock",
-        "/view_top/image@sensor_msgs/msg/Image@gz.msgs.Image",
-        "/view_iso/image@sensor_msgs/msg/Image@gz.msgs.Image",
-        "/view_line/image@sensor_msgs/msg/Image@gz.msgs.Image",
-    ]
-    n = 6  # 固定桥接上限，多余的车不会报错（桥接未出现的话题会等待）
-    for i in range(n):
-        bridge_topics += [
-            f"/robot_{i}/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist",
-            f"/robot_{i}/odom@nav_msgs/msg/Odometry@gz.msgs.Odometry",
-            f"/robot_{i}/scan@sensor_msgs/msg/LaserScan@gz.msgs.LaserScan",
-            f"/robot_{i}/tf@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V",
-            f"/robot_{i}/joint_states@sensor_msgs/msg/JointState@gz.msgs.Model",
-        ]
-    bridge = Node(
-        package="ros_gz_bridge", executable="parameter_bridge",
-        name="ros_gz_bridge", output="screen", arguments=bridge_topics,
-    )
+    # 相机的桥接是可选的：ros_gz_bridge 桥接 Image 时若订阅端跟不上，图像缓冲会
+    # 持续增长（实测涨到 ~5GB 触发 OOM killer）。所以默认只桥接非图像话题；
+    # 需要截图时显式打开 bridge_cameras:=true，且建议一次只开一路
+    # （见 tools/capture_views.py 与 assets/readme 的生成步骤）。
+    def _bridge(context, *args, **kwargs):
+        topics = ["/clock@rosgraph_msgs/msg/Clock@gz.msgs.Clock"]
+        if LaunchConfiguration("bridge_cameras").perform(context).lower() == "true":
+            topics += [
+                "/view_top/image@sensor_msgs/msg/Image@gz.msgs.Image",
+                "/view_iso/image@sensor_msgs/msg/Image@gz.msgs.Image",
+                "/view_line/image@sensor_msgs/msg/Image@gz.msgs.Image",
+            ]
+        n = 6  # 固定桥接上限，多余的车不会报错（桥接未出现的话题会等待）
+        for i in range(n):
+            topics += [
+                f"/robot_{i}/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist",
+                f"/robot_{i}/odom@nav_msgs/msg/Odometry@gz.msgs.Odometry",
+                f"/robot_{i}/scan@sensor_msgs/msg/LaserScan@gz.msgs.LaserScan",
+                f"/robot_{i}/tf@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V",
+                f"/robot_{i}/joint_states@sensor_msgs/msg/JointState@gz.msgs.Model",
+            ]
+        return [Node(package="ros_gz_bridge", executable="parameter_bridge",
+                     name="ros_gz_bridge", output="screen", arguments=topics)]
 
     use_sim_time = LaunchConfiguration("use_sim_time")
     core = [
@@ -148,9 +151,11 @@ def generate_launch_description():
         DeclareLaunchArgument("battery_drain", default_value="0.55"),
         DeclareLaunchArgument("policy", default_value="nearest"),
         DeclareLaunchArgument("seed", default_value="7"),
+        DeclareLaunchArgument("bridge_cameras", default_value="false",
+                              description="桥接 /view_*/image（截图用，注意桥接端内存）"),
         DeclareLaunchArgument("run_label", default_value="gazebo"),
         DeclareLaunchArgument("metrics_dir", default_value="/tmp/fleetflow_metrics"),
-        gz, gz_gui, bridge,
+        gz, gz_gui, OpaqueFunction(function=_bridge),
         *core,
         OpaqueFunction(function=_robots),
     ])

@@ -275,6 +275,8 @@ class FactoryManager(Node):
             msg.x, msg.y = float(m.x), float(m.y)
             wait = self.stations[f"{m.stage}_waiting_{m.lane}"]
             fin = self.stations[f"{m.stage}_finished_{m.lane}"]
+            msg.waiting_station = wait.name
+            msg.finished_station = fin.name
             msg.input_count = 1 if wait.material is not None else 0
             msg.output_count = m.done_count + (1 if fin.material is not None else 0)
             uptime = max(0.1, time.time() - m.started)

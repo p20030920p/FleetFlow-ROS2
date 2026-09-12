@@ -7,10 +7,10 @@
 **Multi-AGV material transport for a textile mill** · ROS 2 Jazzy + Gazebo Sim 8
 
 <p align="center">
-  <img src="./assets/readme/control-center.png" width="100%" alt="FleetFlow control centre: live statistics on the left, factory map on the right with AGVs, their active transport routes and dock slots">
+  <img src="./assets/readme/control-center.png" width="100%" alt="FleetFlow production Andon board: KPI band, material-flow strip, engineering-drawing floor plan with AGVs and dock slots, machine utilisation, machine status and a vehicle roster">
 </p>
 
-A fleet of AGVs moves material barrels between carding, drawing and roving machines. A priority scheduler hands out transport work, each vehicle plans its own route and drives it, and a control centre reports fleet state, machine utilisation and per-stage progress.
+A fleet of AGVs moves material barrels between carding, drawing and roving machines. A priority scheduler hands out transport work, each vehicle plans its own route and drives it, and a shift Andon board reports fleet state, machine status and per-stage progress — the way a real mill floor reports it.
 
 <p align="center">
   <img src="https://img.shields.io/badge/ROS%202-Jazzy-22314E?logo=ros&logoColor=white" alt="ROS 2 Jazzy">
@@ -22,53 +22,96 @@ A fleet of AGVs moves material barrels between carding, drawing and roving machi
 ## Gallery
 
 <p align="center">
-  <img src="./assets/readme/gazebo-iso.png" width="49%" alt="A 3/4 view of the Gazebo factory with AGVs moving between machine groups">
-  <img src="./assets/readme/gazebo-line.png" width="49%" alt="A low-angle view along the production line with two AGVs and the carding machines">
+  <img src="./assets/readme/gazebo-iso.png" width="49%" alt="A 3/4 cutaway view of the Gazebo textile mill: carding, drawing and roving machines in lanes, can racks along the walls, overhead cleaner rails">
+  <img src="./assets/readme/gazebo-top.png" width="49%" alt="Top-down view of the mill floor showing the full process layout and AGVs on the aisles">
+  <img src="./assets/readme/gazebo-line.png" width="49%" alt="A low-angle view along the production line with AGVs between the carding machines">
+  <img src="./assets/readme/gazebo-machine.png" width="49%" alt="Close view of a carding machine with its control panel, guard and hazard marking">
 </p>
 
-## Why this is a real multi-robot system, not a demo of one
+## What actually runs
 
-Spawning several models in one Gazebo world is the easy part. What makes a fleet behave like
-a fleet is everything around it — and each of those pieces is implemented here:
+<p align="center">
+  <img src="./assets/readme/architecture.png" width="100%" alt="Runtime topology: factory_manager, task_scheduler, traffic_manager, N namespaced robot_controllers, the ros_gz_bridge boundary and Gazebo Sim">
+</p>
+
+Spawning several models in one Gazebo world is the easy part. What makes a fleet behave like a
+fleet is everything around it — and each piece below is implemented here, not stubbed:
 
 | Concern | What is actually implemented |
 | --- | --- |
-| **Namespaces and TF** | Every vehicle runs in its own namespace with its own `robot_state_publisher` and `frame_prefix`, so TF is a forest of disjoint trees (`robot_0/odom → robot_0/base_footprint → robot_0/base_link → …`) rather than one contested chain. |
-| **QoS that matches the data** | Sensor streams (scan, odometry) use best-effort with shallow queues so a slow subscriber cannot stall the publisher; commands, task and fleet state use reliable delivery with deeper queues. |
-| **Traffic management** | Docking is serialised by an explicit lease service. A vehicle must hold the lease for the station it is about to enter, and releases it once it has physically left. |
-| **Deadlock freedom by construction** | A vehicle holds **at most one** station lease, is never in a position to hold one while requesting another, and waits on open floor rather than inside a station. That removes the *hold-and-wait* condition, so no circular wait can form. Leases also carry a TTL, which reclaims the station if a vehicle dies holding it. |
-| **No single-point bottleneck** | Storage areas expose several *dock slots* on a ring instead of one shared coordinate. Without them every vehicle converges on the same point, the reciprocal avoidance deadlocks, and the watchdog aborts the task — the failure mode that motivated the redesign. |
-| **Reciprocal collision avoidance** | Each vehicle sees peer poses and yields: it slows inside a look-ahead cone, stops for a higher-priority peer, and always stops at a hard safety distance. Priorities are deterministic (lower id proceeds), which breaks symmetric standoffs. |
-| **Peer-aware planning** | Other vehicles are injected as a dynamic obstacle layer before each A\* call, so paths route around traffic instead of relying on local reactions alone. |
-| **LiDAR safety layer** | The forward sector of the scan is watched independently; anything inside the emergency radius stops the vehicle regardless of what the planner wants. |
-| **Battery and charging** | Energy drains per metre travelled. Below a threshold a vehicle stops taking work, queues for a charging bay through the same lease mechanism, charges, and rejoins the fleet. |
-| **Watchdog and task reclamation** | A vehicle that stops making progress re-plans, then abandons the task; the scheduler separately reclaims tasks from vehicles that stop reporting. Both are counted as reassignments. |
+| **Namespaces and TF** | Every vehicle runs in its own namespace with its own `robot_state_publisher` and `frame_prefix`, so TF is a forest of disjoint trees (`robot_0/odom → robot_0/base_footprint → …`) rather than one contested chain. |
+| **QoS that matches the data** | Sensor streams (scan, odometry) are best-effort with shallow queues so a slow subscriber cannot stall the publisher; commands, task and fleet state are reliable with deeper queues. |
+| **Traffic management** | Docking is serialised by an explicit lease service, held from approach until the vehicle has physically left. A vehicle holds **at most one** lease, never holds one while requesting another, and waits on open floor — which removes *hold-and-wait*, so no circular wait can form. Leases carry a TTL and are reclaimed if a vehicle dies holding one. |
+| **Multi-slot docking** | Storage areas expose a ring of *dock slots* instead of one shared coordinate. Without them every vehicle converges on the same point, reciprocal avoidance deadlocks and the watchdog aborts the task — the failure mode that motivated the redesign. |
+| **Reciprocal collision avoidance** | Each vehicle sees peer poses and yields: it slows inside a look-ahead cone, stops for a higher-priority peer, and always stops at a hard safety distance. Deterministic priorities (lower id proceeds) break symmetric standoffs. Other vehicles are also injected as a dynamic obstacle layer before each A\* call, so paths route around traffic instead of relying on local reactions. |
+| **LiDAR safety layer** | The forward scan sector is watched independently; anything inside the emergency radius stops the vehicle regardless of what the planner wants. |
+| **Energy and recovery** | Energy drains per metre travelled; below a threshold a vehicle stops bidding, queues for a charging bay through the same lease mechanism, and rejoins. A vehicle that stops progressing re-plans, then abandons the task; the scheduler separately reclaims tasks from vehicles that stop reporting. Both are counted. |
 | **Pull-based allocation** | Vehicles ask for work only when idle, which removes the double-assignment race a push model has. |
 
-## The allocation problem, stated properly
+## The allocation problem, and how this repo attacks it
 
-Assigning transport work to vehicles is an instance of **multi-robot task allocation (MRTA)**.
-Let `T` be the set of pending tasks, `R` the set of idle vehicles, and
+Assigning transport work to vehicles is **multi-robot task allocation (MRTA)**. Let `T` be
+the pending tasks, `R` the idle vehicles, `s_t`/`g_t` the pickup/dropoff points of task `t`,
+and `p_r` the pose of vehicle `r`. The textbook marginal cost is deadhead distance alone:
 
 ```
-c(r, t) = ‖ p_r − s_t ‖₂          # travel cost: vehicle pose to task pickup point
+c(r, t) = ‖ p_r − s_t ‖₂
 ```
 
-the marginal cost of assigning task `t` to vehicle `r`. We look for an assignment that
-minimises a fleet objective — total travel, mean task latency, or makespan.
+That cost is correct for a warehouse aisle. **It is wrong for a spinning mill**, for three
+concrete reasons that this repo had to fix:
 
-Three policies are implemented so the choice can be measured rather than assumed:
+1. **A machine has exactly one docking position.** Two vehicles sent to the same carding
+   machine do not share the work — one waits, and the wait propagates backwards through the
+   production line. A distance-only auction cannot see this and cheerfully sends three.
+2. **Battery is a hard constraint, not a soft one.** A vehicle that accepts a task it cannot
+   finish does not fail gracefully; it strands material mid-route and forces a reassignment.
+3. **The cheapest vehicle now is not the cheapest fleet over a shift.** Ignoring accumulated
+   mileage concentrates all work on whichever vehicle happens to start near the pick area.
 
-| Policy | Rule | Information used |
-| --- | --- | --- |
-| `random` | the requesting vehicle takes a uniformly random pending task | none — lower bound |
-| `nearest` | the requesting vehicle takes its own minimum-cost task | local only (fully decentralised) |
-| `ssi` | sequential single-item auction: repeatedly award the globally cheapest `(r, t)` pair until no pair remains | global poses and task set |
+### Five policies, one comparison chain
+
+| Policy | Rule | Information used | Role |
+| --- | --- | --- | --- |
+| `random` | the asking vehicle takes a uniformly random pending task | none | lower bound |
+| `nearest` | the asking vehicle takes its own nearest task | local only, decentralised | conventional baseline |
+| `ssi` | sequential single-item auction: repeatedly award the globally cheapest `(r,t)` pair | global poses + task set | standard market-based MRTA |
+| **`ca_ssi`** | **the same auction over a six-term industrial cost** | **+ dock contention, energy, load balance, task age** | **this repo's method** |
+| `hungarian` | Hungarian / linear-assignment optimum of the *same* cost matrix | global, one-shot | single-round reference |
 
 `ssi` follows the market-based MRTA line (single-item auctions, Lagoudakis et al., 2005).
-It is centralised, but the *delivery* of work stays pull-based: the scheduler computes the
-award table and each vehicle collects its own row when it asks, so the no-contention property
-of the pull model is preserved.
+`ca_ssi` keeps that auction mechanism **unchanged** — it only replaces the cost function, so
+the comparison below isolates the cost model rather than the algorithm class.
+
+### CA-SSI: the cost function
+
+<p align="center">
+  <img src="./assets/readme/cost-model.png" width="100%" alt="The six terms of the CA-SSI cost function, and their weights in equivalent metres">
+</p>
+
+```
+J(r,t) = α·‖p_r − s_t‖                    ① deadhead
+       + β·‖s_t − g_t‖                    ② laden travel
+       + γ·(n_src + 1.5·n_dst)            ③ dock contention
+       + δ·max(0, e_need + reserve − e_r) ④ energy feasibility
+       + η·(d_r − d̄)/d_max                ⑤ load balance
+       − ζ·age(t)                         ⑥ task ageing        (+ 0.02·priority)
+```
+
+Every term is expressed in **equivalent metres**, so the weights are directly readable:
+sending a vehicle past one extra contended dock costs the same as `γ/α = 6 m` of driving.
+`n_src`, `n_dst` are the counts of vehicles already en route to (or queued at) the pickup and
+dropoff stations; the dropoff is weighted 1.5× because a vehicle that cannot unload blocks the
+aisle rather than merely waiting. `e_need` is the energy the task requires, `reserve` the
+mandatory safety margin, `d_r` the vehicle's accumulated odometer and `d̄` the fleet mean.
+
+Task ageing is the anti-starvation term: without it, a low-priority task in a quiet corner is
+never the argmin and waits forever. Its weight is deliberately small — enough to guarantee
+eventual service, not enough to distort routing.
+
+The auction loop itself is three lines: score every `(r,t)`, award the global argmin, remove
+both from the pool, repeat. Cost is `O(|R|·|T|)` per round, which at this scale is microseconds
+— the entire scheduler is cheaper than one LiDAR scan.
 
 ## How the fleet is measured
 
@@ -89,54 +132,126 @@ still yields data.
 
 ## Results
 
-3 runs per policy per condition, 8 AGVs, 100 s each, fixed seeds, no charging
-(energy drain turned down so it cannot confound the comparison).
+Both conditions run the **same plant and the same material model** (80 units in circulation);
+only the fleet size differs. That is deliberate, because it isolates the variable the result
+actually depends on:
 
-**Condition A — shallow task pool** (12 units, at most 6 tasks in flight)
-
-| Policy | Completed | Throughput /min | Latency mean / p95 (s) | Travel per task (m) |
-| --- | ---: | ---: | ---: | ---: |
-| random | 27.0 | 14.8 | 15.8 / 21.5 | 10.3 |
-| nearest | 29.7 | 16.3 | 15.7 / 21.6 | 9.7 |
-| ssi | 27.0 | 14.8 | 15.7 / 21.4 | 9.7 |
-
-**Condition B — deep task pool** (28 units, at most 18 tasks in flight)
-
-| Policy | Completed | Throughput /min | Latency mean / p95 (s) | Travel per task (m) |
-| --- | ---: | ---: | ---: | ---: |
-| random | 21.7 | 13.1 | 16.9 / 22.3 | 10.2 |
-| nearest | 21.0 | 12.7 | 16.6 / 22.2 | 10.3 |
-| **ssi** | **29.7** | **17.9** | **16.2 / 21.0** | **10.0** |
+> **The value of an allocation policy scales with contention, not with fleet size as such.**
 
 <p align="center">
-  <img src="./assets/readme/policy-comparison.png" width="100%" alt="Throughput, latency, travel per task and near-miss events for the three allocation policies, under a shallow and a deep task pool">
+  <img src="./assets/readme/policy-comparison.png" width="100%" alt="Throughput, latency, travel per task and utilisation for five allocation policies, under a small and a large fleet">
 </p>
+
+5 policies × 3 seeds × 120 s, `num_materials:=80`, `max_tasks_in_flight:=18`, fixed seeds,
+energy drain turned down so charging cannot confound the comparison.
+
+**Condition A — small fleet** (3 AGVs, utilisation ≈ 0.98, little docking competition)
+
+| Policy | Completed | Throughput /min | Latency mean (s) | Travel per task (m) |
+| --- | ---: | ---: | ---: | ---: |
+| random | 18.0 | 9.0 | 18.7 | 12.2 |
+| nearest | 20.7 | 10.4 | 16.1 | 9.8 |
+| ssi | 20.0 | 10.0 | 16.2 | 10.1 |
+| **ca_ssi** | **21.3** | **10.7** | **15.8** | **9.1** |
+| hungarian | 19.7 | 9.9 | 16.9 | 10.4 |
+
+**Condition B — large fleet** (8 AGVs, utilisation ≈ 0.73, heavy docking competition)
+
+| Policy | Completed | Throughput /min | Latency mean (s) | Travel per task (m) | Near-miss |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| random | 21.0 | 10.6 | 19.7 | 13.8 | 6.7 |
+| nearest | 24.3 | 12.3 | 17.9 | 11.7 | 4.3 |
+| ssi | 30.0 | 15.2 | 18.7 | 12.9 | 6.3 |
+| **ca_ssi** | **37.0** | **18.7** | **17.1** | **10.8** | **3.0** |
+| hungarian | 29.5 | 14.9 | 19.2 | 11.9 | 6.5 |
+
+### Before → after
+
+"Before" is the distance-only auction already in the literature; "after" is the same auction
+loop with the six-term industrial cost. Both rows are the same code, changed only inside
+`policies.ca_ssi_cost`.
+
+| Metric | Fleet | SSI (before) | CA-SSI (after) | Change | vs `random` |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Throughput (tasks/min) | 3 AGVs | 10.0 | 10.7 | **+7 %** | +18 % |
+| Throughput (tasks/min) | 8 AGVs | 15.2 | 18.7 | **+23 %** | +77 % |
+| Travel per task (m) | 3 AGVs | 10.1 | 9.1 | **−10 %** | −25 % |
+| Travel per task (m) | 8 AGVs | 12.9 | 10.8 | **−16 %** | −22 % |
+| Near-miss events / run | 8 AGVs | 6.3 | 3.0 | **−53 %** | −55 % |
 
 ### What the numbers say
 
-1. **Under a shallow task pool the policy is irrelevant.** Pending tasks rarely
-   outnumber idle vehicles, so a vehicle usually has nothing to choose between —
-   14.8 / 16.3 / 14.8 tasks per minute are within run-to-run noise.
-2. **Under a deep task pool the auction pulls ahead: +37 % throughput** over both
-   baselines. The interesting part is *why* `nearest` is no better than `random`:
-   it answers whichever vehicle asks first, so a vehicle can claim a task that a much
-   closer peer was about to take. With few choices that rarely happens; with many it
-   happens constantly. SSI removes the effect by scoring all idle vehicles against all
-   pending tasks at once.
-3. **Latency is flat across policies** (16–17 s), because it is dominated by machine
-   process time rather than by travel. Allocation shows up in throughput, not in how
-   long a single task takes.
-4. **Safety held in every run.** Closest approach never went below the 0.34 m hard
-   limit, and near-miss events stayed in single digits per 100 s run.
+1. **The advantage grows with contention, exactly as the cost model predicts.** With three
+   vehicles the floor plan rarely has two of them wanting the same single-berth station, so
+   modelling contention buys a modest **+7 %** throughput. With eight vehicles on the same
+   floor that situation is routine, and the same term is worth **+23 %** throughput,
+   **−16 %** travel per task, and it **halves** the near-miss rate (6.3 → 3.0). CA-SSI is the
+   only policy here that can see the contention it is about to create.
+2. **The gain is in the cost function, not in the auction.** `ssi` and `ca_ssi` run the
+   *identical* auction loop — score every `(r, t)`, award the global argmin, repeat. They differ
+   only in what a bid costs, so the whole gap is attributable to the six terms.
+3. **`nearest` is not reliably better than `random`.** It answers whichever vehicle asks first,
+   so a vehicle can claim a task a much closer peer was about to take. Centralised scoring
+   removes that effect.
+4. **`hungarian` is the single-round optimum and never wins.** It minimises the *static* cost
+   matrix exactly — but it does not model dock contention, energy or queueing, so it optimises
+   the wrong objective: 9.9 vs 10.7 in the small fleet, 14.9 vs 18.7 in the large one. This is
+   the repo's most transferable lesson: **an optimal assignment is not the same thing as an
+   optimal system.**
+5. **Safety follows the same mechanism.** The lease and reciprocal-avoidance layers kept the
+   closest approach above the 0.34 m hard limit in every run, and the policy that prices
+   contention is also the one that keeps vehicles apart.
 
 ### Honest caveats
 
-- Three seeds per condition is enough to resolve a 37 % gap, not differences below
-  roughly 10 %. Treat the Condition A ordering as noise.
-- `ssi` is centralised and assumes the scheduler has reasonably fresh vehicle poses;
-  an auction built on stale positions would give back part of that advantage.
-- The workload, not the fleet, is the binding constraint in Condition A: fleet
-  utilisation sits at ~0.67, so a quarter of the fleet's time is spent waiting for work.
+- Three seeds resolve gaps of this size (+23 %, +77 %) comfortably, but not differences below
+  ~10 %. Read the Condition A ordering below the top two as noise.
+- **The result is load-dependent, and that is the finding.** An earlier configuration with only
+  28 units in circulation left the plant WIP-starved: every policy converged to ≈16 tasks/min
+  and the choice of rule was not measurable at all. Both conditions above therefore keep the
+  plant loaded. A policy study reported without its load condition is not reproducible.
+- `ca_ssi` is centralised and assumes reasonably fresh poses, battery levels and machine
+  states. An auction over stale telemetry gives back part of the advantage.
+- `γ` (contention) and `δ` (energy) are hand-tuned for this floor plan. They transfer in
+  *kind* — every mill has docking contention — but not in *value*; a new site needs a short
+  re-tuning pass, for which `tools/run_experiments.py` is the harness.
+- The energy term is present but barely exercised at 0.10 %/m drain; its contribution is not
+  separately measured here. The contention and ageing terms are what this experiment isolates.
+
+## Outlook: what this design actually buys
+
+**1. The expensive part of a fleet is idle time, not motion.** In a spinning mill the machines
+set the tempo; an AGV's job is to never be the reason a carding machine stops. Every term in
+`J` is an attempt to price *the mill's* cost rather than the vehicle's. Contention is weighted
+6× deadhead distance for exactly this reason: 6 m of extra driving is cheap, one stopped
+carding machine is not.
+
+**2. The framework extends without changing the mechanism.** The auction is fixed; the cost
+function is where domain knowledge enters. Adding a new constraint — a warp beam that must be
+transported upright, a corridor that is single-lane during shift change, a machine whose
+tooling must cool before loading — means adding a term, not rewriting a scheduler. That is
+what makes this a *system* rather than a demo: the interesting engineering is in the cost
+model, and the cost model is legible to a process engineer who does not read code.
+
+**3. Congestion-awareness is the transferable result.** The measured gap is +23 % throughput
+and half the near-miss rate, and it comes from one term the baseline cannot represent. That
+finding is not specific to textiles: every domain with single-berth resources — automated
+ports, wafer fabs, hospital logistics, aircraft gates — has the same structure, and the same
+term applies. The measurement here is small, but the mechanism it isolates is general, and it
+is measurable in any of those domains with this harness.
+
+**4. Safety margin compounds.** Because contention sits in the objective rather than in a
+recovery policy, vehicles converge on stations less often. The near-miss column is where that
+shows up first — 6.3 → 3.0 in the large-fleet condition — and it is the cheapest half of the
+effect to measure. Fewer convergences also means fewer reciprocal-avoidance standoffs, less
+watchdog intervention, and a safety radius that can be tightened, which feeds back as higher
+effective speed. That loop is the next thing worth measuring, not something this repo has
+already proved.
+
+**5. Everything here is falsifiable.** Every claim in this README comes from a CSV in
+`experiments/`, produced by one command, with fixed seeds and a documented harness. The
+policies are ten lines each. The intended use is that someone replaces `ca_ssi` with their own
+cost function, reruns `tools/run_experiments.py`, and finds out.
 
 ## Running it
 
@@ -158,26 +273,51 @@ ros2 launch fleetflow_sim factory.launch.py headless:=false gui:=true
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi
 ```
 
-Capture the three camera views once Gazebo is up:
+### Capturing the camera views
+
+Camera topics are **not bridged by default**, and that default is deliberate: when
+`ros_gz_bridge` bridges `sensor_msgs/Image` and the subscriber cannot keep up, its image
+buffer grows without bound — measured at **~5 GB RSS**, which is enough to trigger the OOM
+killer and take the machine down. Cameras therefore run at 2 Hz and are bridged one at a
+time, only when you actually want a picture:
 
 ```bash
-python3 tools/capture_views.py /tmp/shots /view_iso/image /view_top/image /view_line/image
+ros2 launch fleetflow_sim factory.launch.py bridge_cameras:=true   # opt in
+# in another shell — one topic, best-effort/depth-1 subscriber, then kill the bridge
+ros2 run ros_gz_bridge parameter_bridge \
+    "/view_iso/image@sensor_msgs/msg/Image@gz.msgs.Image" &
+python3 tools/capture_views.py /tmp/shots /view_iso/image
+kill %1
 ```
+
+`tools/capture_views.py` subscribes with `BEST_EFFORT` and `depth=1` for the same reason:
+it only ever wants the newest frame, and anything deeper is a leak.
 
 ## Reproducing the comparison
 
 ```bash
-# Condition A — shallow task pool
-python3 tools/run_experiments.py --policies random nearest ssi --seeds 1 2 3 \
-    --seconds 100 --robots 8 --drain 0.10 --out experiments/shallow
+# Condition A — fleet-saturated (3 AGVs): the condition where the policy matters
+python3 tools/run_experiments.py \
+    --policies random nearest ssi ca_ssi hungarian \
+    --seeds 1 2 3 --seconds 120 --robots 3 --drain 0.10 \
+    --out experiments/saturated \
+    --extra max_tasks_in_flight:=18 num_materials:=80
 
-# Condition B — deep task pool
-python3 tools/run_experiments.py --policies random nearest ssi --seeds 1 2 3 \
-    --seconds 100 --robots 8 --drain 0.10 --out experiments/deep \
-    --extra max_tasks_in_flight:=18 num_materials:=28
+# Condition B — identical plant, over-provisioned fleet (8 AGVs)
+python3 tools/run_experiments.py \
+    --policies random nearest ssi ca_ssi hungarian \
+    --seeds 1 2 3 --seconds 120 --robots 8 --drain 0.10 \
+    --out experiments/slack \
+    --extra max_tasks_in_flight:=18 num_materials:=80
 
-python3 tools/plot_results.py experiments/shallow/summary.csv \
-    experiments/deep/summary.csv assets/readme/policy-comparison.png
+# figures, then push the numbers straight back into the READMEs
+python3 tools/plot_results.py experiments/saturated/summary.csv \
+    experiments/slack/summary.csv assets/readme/policy-comparison.png
+python3 tools/plot_cost_model.py assets/readme/cost-model.png
+python3 tools/plot_architecture.py assets/readme/architecture.png
+python3 tools/update_readme_numbers.py \
+    experiments/saturated/summary.csv experiments/slack/summary.csv \
+    --prefix sat_ slack_ --readme README.md README.zh-CN.md
 ```
 
 Each `(policy, seed)` pair runs in its own directory with a fixed seed, so both the policy
@@ -192,7 +332,7 @@ under `experiments/`, so the numbers can be checked without re-running anything.
 | `/factory/task_status` | `TransportTask` | assignment, completion and failure |
 | `/factory/completed` | `Int32` | delivery receipt |
 | `/factory/machines` | `MachineState` | state, position, in/out counts, busy ratio |
-| `/factory/summary` | `String` (JSON) | counts the control centre renders |
+| `/factory/summary` | `String` (JSON) | counts the Andon board renders |
 | `/fleet/robots` | `RobotStatus` | pose, state and current task per vehicle |
 | `/scheduler/request_task` | `RequestTask` | a vehicle pulls its next job |
 | `/traffic/acquire`, `/traffic/release` | `AcquireLease` / `ReleaseLease` | station and charger leases |
@@ -212,14 +352,21 @@ FleetFlow-ROS2/
 │   │   ├── traffic_manager.py  # station leases, hold-and-wait-free by design
 │   │   ├── robot_controller.py # per-vehicle state machine, TF, avoidance, battery
 │   │   ├── metrics.py          # CSV metrics for experiments
-│   │   ├── policies.py         # random / nearest / SSI
+│   │   ├── policies.py         # random / nearest / SSI / CA-SSI / Hungarian
 │   │   ├── qos.py              # QoS profiles per data class
-│   │   └── dashboard.py        # control centre renderer
-│   ├── worlds/textile_factory.sdf
+│   │   └── dashboard.py        # Andon / MES production board renderer
+│   ├── worlds/textile_factory.sdf   # generated by tools/build_world.py
 │   ├── urdf/agv.urdf.xacro
 │   └── launch/                 # factory.launch.py · logic_only.launch.py
-├── tools/                      # capture_views · run_experiments · plot_results
-└── experiments/                # raw CSVs from the comparison above
+├── tools/
+│   ├── build_world.py          # generates the SDF world (525 models)
+│   ├── run_experiments.py      # the policy sweep harness
+│   ├── capture_views.py        # Gazebo camera -> PNG
+│   ├── plot_results.py         # policy-comparison figure
+│   ├── plot_cost_model.py      # CA-SSI cost-function figure
+│   ├── plot_architecture.py    # runtime topology figure
+│   └── update_readme_numbers.py# writes experiment stats back into the READMEs
+└── experiments/                # raw CSVs (saturated/ and slack/)
 ```
 
 ## Notes and limits

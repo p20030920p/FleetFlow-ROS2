@@ -13,7 +13,13 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
+
+# 相机流用 best-effort + 深度 1：只关心"最新一帧"，
+# 用 reliable/深度10 会让桥接端的图像缓冲无限增长（实测涨到 5GB 触发 OOM）。
+CAM_QOS = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
+                     history=HistoryPolicy.KEEP_LAST, depth=1)
 
 
 class Capture(Node):
@@ -22,7 +28,7 @@ class Capture(Node):
         self.outdir, self.topics, self.got = outdir, topics, {}
         os.makedirs(outdir, exist_ok=True)
         for t in topics:
-            self.create_subscription(Image, t, lambda m, t=t: self.cb(m, t), 10)
+            self.create_subscription(Image, t, lambda m, t=t: self.cb(m, t), CAM_QOS)
 
     def cb(self, m, t):
         if t in self.got:

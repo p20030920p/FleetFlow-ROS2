@@ -164,6 +164,8 @@ class RobotController(Node):
         s.task_id = self.task.task_id if self.task else -1
         s.distance_total = float(self.total_len)
         s.distance_done = float(self.seen_len)
+        s.battery = float(self.battery)
+        s.odom_total = float(self.total_len) + float(self.seen_len)
         self.pub_status.publish(s)
 
     def broadcast_tf(self):
