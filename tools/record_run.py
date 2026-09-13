@@ -22,6 +22,7 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from nav_msgs.msg import Path
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
@@ -32,7 +33,8 @@ STATE_QOS = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
 
 
 class Recorder(Node):
-    def __init__(self, path: str, fps: float, seconds: float, min_robots: int = 0):
+    def __init__(self, path: str, fps: float, seconds: float, min_robots: int = 0,
+                 max_robots: int = 16):
         super().__init__("run_recorder")
         self.fh = open(path, "w", encoding="utf-8")
         self.fps = fps
@@ -43,6 +45,7 @@ class Recorder(Node):
         self.robots: dict[int, RobotStatus] = {}
         self.tasks: dict[int, dict] = {}
         self.machines: dict[str, MachineState] = {}
+        self.paths: dict[int, list] = {}       # robot_id -> 剩余规划路径
         self.summary: dict = {}
         self.n = 0
 
@@ -53,6 +56,10 @@ class Recorder(Node):
         self.create_subscription(MachineState, "/factory/machines", self.on_machine,
                                  STATE_QOS)
         self.create_subscription(String, "/factory/summary", self.on_summary, STATE_QOS)
+        # 每台车的剩余规划路径：动画要画"真正会走的路线"，直线画法看起来像穿墙
+        for rid in range(max_robots):
+            self.create_subscription(Path, f"/robot_{rid}/path",
+                                     lambda m, r=rid: self.on_path(m, r), STATE_QOS)
         self.create_timer(1.0 / fps, self.snap)
         self.get_logger().info(f"recording -> {path} @ {fps:g} Hz")
 
@@ -89,6 +96,10 @@ class Recorder(Node):
     def on_machine(self, m: MachineState):
         self.machines[m.name] = m
 
+    def on_path(self, m: Path, rid: int):
+        self.paths[rid] = [[round(p.pose.position.x, 2), round(p.pose.position.y, 2)]
+                           for p in m.poses]
+
     def on_summary(self, m: String):
         try:
             self.summary = json.loads(m.data)
@@ -118,6 +129,7 @@ class Recorder(Node):
             "machines": [[m.name, m.stage, m.state, int(m.input_count),
                           int(m.output_count), round(float(m.busy_ratio), 3)]
                          for m in self.machines.values()],
+            "paths": {str(k): v for k, v in self.paths.items() if v},
             "summary": self.summary,
         }
         self.fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -130,12 +142,15 @@ def main() -> int:
     ap.add_argument("out")
     ap.add_argument("--fps", type=float, default=10.0)
     ap.add_argument("--seconds", type=float, default=90.0)
+    ap.add_argument("--max-robots", type=int, default=16,
+                    help="订阅 /robot_0..N/path 的上限")
     ap.add_argument("--min-robots", type=int, default=0,
                     help="集齐这么多台车之后才开始计时（首帧才有完整车队）")
     args = ap.parse_args()
 
     rclpy.init()
-    node = Recorder(args.out, args.fps, args.seconds, args.min_robots)
+    node = Recorder(args.out, args.fps, args.seconds, args.min_robots,
+                    args.max_robots)
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, SystemExit):

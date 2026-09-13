@@ -14,12 +14,13 @@
 </p>
 
 <p align="center">
-  <img src="./assets/readme/demo.gif" width="100%" alt="A full transport cycle: transport tasks appear as hollow squares, the scheduler awards each one to a vehicle, the vehicle drives to the pickup, delivers, and the completed count rises while the material-flow counters advance through empty, sliver, drawn sliver and roving bobbin">
+  <img src="./assets/readme/demo.gif" width="100%" alt="A full transport cycle: transport tasks appear as hollow squares, the auction awards each one to a vehicle, the vehicle drives its planned path to the pickup and on to the dropoff, and the completed count rises while the material-flow counters advance through empty, sliver, drawn sliver and roving bobbin">
 </p>
 
 <p align="center">
   <sub><b>One complete cycle, dispatch to delivery.</b> Tasks appear · the auction awards them ·
-  vehicles drive and dock · counters advance. Recorded from a live run, played at 6×.</sub>
+  vehicles drive the route the planner actually produced (solid = covered, dashed = remaining) ·
+  counters advance. Recorded from a live run, played at 6×.</sub>
 </p>
 
 A fleet of AGVs moves material barrels between carding, drawing and roving machines. A priority

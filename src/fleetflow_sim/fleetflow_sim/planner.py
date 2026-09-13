@@ -185,6 +185,12 @@ class PurePursuit:
     def finished(self) -> bool:
         return not self.path or self.idx >= len(self.path)
 
+    def remaining_path(self) -> list:
+        """还没走完的路径点（含当前索引那一点），供可视化使用。"""
+        if self.finished:
+            return []
+        return list(self.path[self.idx:])
+
     def remaining(self) -> float:
         if self.finished:
             return 0.0

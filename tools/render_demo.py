@@ -122,6 +122,23 @@ def draw_floor(ax):
     # 厂房轮廓最后画（zorder 高），否则会被分区底色盖掉
     ax.add_patch(Rectangle((bx, by), W * s, H * s, facecolor="none",
                            edgecolor="#8d8880", lw=1.8, zorder=12))
+    # 待命区与充电位：车会停到这里，不标出来读者会以为是"没有图例的地方"
+    pk = L.PARK
+    px0, py0, _ = w2p(pk["x0"] - 0.7, pk["y"] - 0.75)
+    px1, py1, _ = w2p(pk["x0"] + pk["dx"] * (pk["n"] - 1) + 0.7, pk["y"] + 0.75)
+    ax.add_patch(Rectangle((px0, py0), px1 - px0, py1 - py0, facecolor="#efe9d8",
+                           edgecolor="#b9ad86", lw=0.9, ls=(0, (3, 2)), zorder=4))
+    ax.text((px0 + px1) / 2, py0 - 7, "待命区 PARK", ha="center", va="top",
+            fontsize=7.8, color="#8a7d52", zorder=8)
+    for name, spec in (("充电位 CHARGER", None),):
+        pass
+    cx0, cy0, _ = w2p(3.6, pk["y"] - 0.75)
+    cx1, cy1, _ = w2p(7.3, pk["y"] + 0.75)
+    ax.add_patch(Rectangle((cx0, cy0), cx1 - cx0, cy1 - cy0, facecolor="#e2edf5",
+                           edgecolor="#8bb0c9", lw=0.9, ls=(0, (3, 2)), zorder=4))
+    ax.text((cx0 + cx1) / 2, cy0 - 7, "充电位 CHARGER", ha="center", va="top",
+            fontsize=7.8, color="#4d7794", zorder=8)
+
     # 分区标注
     for stage, x in (("carding", 7.0), ("drawing", 13.6), ("roving", 18.7)):
         px, py, _ = w2p(x, L.BUILDING["h"] - 0.9)
@@ -148,33 +165,95 @@ def short_station(name: str) -> str:
 
 
 def draw_task(ax, t, tt, alpha):
-    """画一个任务：待办=空心方框，在途=起点到终点的连线。"""
+    """待办任务 = 取货位空心方框 + 一条淡虚线示意去向。
+
+    在途任务不在这里画：它的路线由 :func:`draw_route` 按**真实规划路径**绘制。
+    早前版本用"取货点直连卸货点"的直线代替路线，会横穿机台，看起来像穿墙。
+    """
     if alpha <= 0.02:
         return
     col, _ = MAT.get(t["material"], (MUTED, ""))
-    sx, sy, s = w2p(t["sx"], t["sy"])
-    dx, dy, _ = w2p(t["dx"], t["dy"])
+    sx, sy, _ = w2p(t["sx"], t["sy"])
     t_a = t.get("t_assigned")
-    running = t_a is not None and tt >= t_a
-    if running:
-        ax.plot([sx, dx], [sy, dy], color=col, lw=1.9, alpha=0.60 * alpha,
-                zorder=7, solid_capstyle="round")
-        # 终点画一个指向卸货位的箭头，一眼看出搬运方向
-        ang = math.atan2(dy - sy, dx - sx)
-        tip = (dx - 11 * math.cos(ang), dy - 11 * math.sin(ang))
-        for sgn in (2.6, -2.6):
-            ax.plot([tip[0], dx - 15 * math.cos(ang) + sgn * math.sin(ang)],
-                    [tip[1], dy - 15 * math.sin(ang) - sgn * math.cos(ang)],
-                    color=col, lw=1.7, alpha=0.75 * alpha, zorder=8,
-                    solid_capstyle="round")
-        ax.add_patch(Circle((dx, dy), 5.0, facecolor="none", edgecolor=col,
+    if t_a is not None and tt >= t_a:
+        return
+    dx, dy, _ = w2p(t["dx"], t["dy"])
+    ax.plot([sx, dx], [sy, dy], color=col, lw=1.0, alpha=0.34 * alpha,
+            zorder=7, ls=(0, (2, 3)))
+    r = 4.6
+    ax.add_patch(Rectangle((sx - r, sy - r), 2 * r, 2 * r, facecolor="none",
+                           edgecolor=col, lw=1.6, alpha=alpha, zorder=9))
+
+
+def draw_route(ax, trail, remaining, col, alpha):
+    """已行驶轨迹（实线）+ 剩余规划路径（虚线），这才是车真正走/要走的路线。"""
+    if len(trail) > 1:
+        xs, ys = zip(*trail)
+        ax.plot(xs, ys, color=col, lw=1.8, alpha=0.42 * alpha, zorder=7,
+                solid_capstyle="round")
+    if len(remaining) > 1:
+        xs, ys = zip(*remaining)
+        ax.plot(xs, ys, color=col, lw=1.9, alpha=0.85 * alpha, zorder=8,
+                ls=(0, (4, 3)), solid_capstyle="round")
+    if remaining:
+        gx, gy = remaining[-1]
+        ax.add_patch(Circle((gx, gy), 5.0, facecolor="none", edgecolor=col,
                             lw=1.7, alpha=alpha, zorder=9))
-        ax.add_patch(Circle((sx, sy), 3.6, facecolor=col, edgecolor="none",
-                            alpha=0.85 * alpha, zorder=9))
-    else:
-        r = 4.6
-        ax.add_patch(Rectangle((sx - r, sy - r), 2 * r, 2 * r, facecolor="none",
-                               edgecolor=col, lw=1.6, alpha=alpha, zorder=9))
+    if trail:
+        ax.add_patch(Circle(trail[0], 3.6, facecolor=col, edgecolor="none",
+                            alpha=0.8 * alpha, zorder=9))
+
+
+def text_w(txt: str, fs: float) -> float:
+    """粗略估算文字像素宽：CJK 约等于字号，拉丁约 0.55 倍。
+
+    之前用 ``len(label) * 常数``，中文被当成半角算，图例全挤在一起。
+    """
+    px = fs * 100.0 / 72.0
+    return sum(1.0 if ord(c) > 0x2E80 else 0.55 for c in txt) * px
+
+
+def draw_legend(ax):
+    """底部通栏图例：说明三角/方框/连线/停靠位/货架各代表什么。"""
+    y = 34
+    ax.plot([0, CW], [70, 70], color=RULE, lw=1.0)
+    x = 22.0
+    ax.text(x, y + 14, "图例 LEGEND", fontsize=8.2, fontweight="bold", color=MUTED,
+            va="center")
+    x += 96
+
+    def item(draw, label, w):
+        nonlocal x
+        draw(x)
+        ax.text(x + w + 8, y, label, fontsize=8.2, color=INK, va="center")
+        x += w + 8 + text_w(label, 8.2) + 22
+
+    def tri(px):
+        ax.add_patch(Polygon([(px + 9, y + 7), (px, y + 12), (px, y + 2)],
+                             closed=True, facecolor=BLUE, edgecolor=INK, lw=0.8))
+    def square(px):
+        ax.add_patch(Rectangle((px + 1, y + 1), 10, 10, facecolor="none",
+                               edgecolor=AMBER, lw=1.6))
+    def route(px):
+        ax.plot([px, px + 13], [y + 6, y + 6], color=GREEN, lw=2.0)
+        ax.plot([px + 13, px + 27], [y + 6, y + 6], color=GREEN, lw=2.0,
+                ls=(0, (3, 2)))
+        ax.add_patch(Polygon([(px + 32, y + 6), (px + 24, y + 10), (px + 24, y + 2)],
+                             closed=True, facecolor=GREEN, edgecolor="none"))
+    def dock(px):
+        ax.add_patch(Rectangle((px + 3, y + 3), 7, 7, facecolor="#ffffff",
+                               edgecolor=MUTED, lw=0.9))
+    def rack(px):
+        ax.add_patch(Rectangle((px, y + 1), 13, 10, facecolor="#e6e2d8",
+                               edgecolor=MUTED, lw=0.9, hatch="////"))
+
+    item(tri, "AGV（编号见车旁）", 12)
+    item(square, "待办任务", 14)
+    item(route, "在途路线：实线=已行驶，虚线=剩余规划", 35)
+    item(dock, "工位停靠位", 13)
+    item(rack, "条筒货架", 15)
+    ax.text(CW - 22, y, "颜色 = 物料：空筒 / 生条 / 熟条 / 粗纱成品",
+            fontsize=8.2, color=MUTED, ha="right", va="center")
 
 
 def draw_robot(ax, rid, x, y, yaw, s, trail):
@@ -253,6 +332,7 @@ def main() -> int:
                     va="center")
 
         draw_floor(ax)
+        draw_legend(ax)
 
         # ---- 任务 ----
         for t in tasks:
@@ -265,15 +345,31 @@ def main() -> int:
             draw_task(ax, t, tt, a if td is None or tt >= td else 1.0)
 
         # ---- 车队 ----
-        trail_len = max(2, int(2.0 / max(1e-6, rows[1]["t"] - t_first)))
+        paths = rec.get("paths", {})
         for r in rec["robots"]:
-            rid = r[0]
-            trail = []
-            for j in range(max(0, idx - trail_len), idx + 1):
-                for rr in rows[j]["robots"]:
-                    if rr[0] == rid:
-                        trail.append((rr[1], rr[2]))
-            draw_robot(ax, rid, r[1], r[2], r[3], None, trail)
+            rid, tid = r[0], r[5]
+            # 当前任务的起点：向前回溯到任务号发生变化的下一帧
+            j = idx
+            if tid != -1:
+                while j > 0:
+                    prev = next((z for z in rows[j - 1]["robots"] if z[0] == rid), None)
+                    if prev is None or prev[5] != tid:
+                        break
+                    j -= 1
+            trail = [(z[1], z[2]) for k in range(j, idx + 1)
+                     for z in rows[k]["robots"] if z[0] == rid]
+            trail = [w2p(x, y)[:2] for x, y in trail]
+            rem = [w2p(x, y)[:2] for x, y in paths.get(str(rid), [])]
+            col = FLEET[rid % len(FLEET)]
+            if tid != -1:
+                draw_route(ax, trail, rem, col, 1.0)
+            short = [(w2p(z[1], z[2])[0], w2p(z[1], z[2])[1])
+                     for z in rows[max(0, idx - 20):idx + 1]["robots"]
+                     if z[0] == rid] if False else None
+            tail = [(w2p(z[1], z[2])[0], w2p(z[1], z[2])[1])
+                    for k in range(max(0, idx - 20), idx + 1)
+                    for z in rows[k]["robots"] if z[0] == rid]
+            draw_robot(ax, rid, r[1], r[2], r[3], None, [] if tid != -1 else tail)
 
         # ---- 右栏 ----
         px0, px1 = 906, CW - 20

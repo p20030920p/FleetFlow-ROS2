@@ -26,13 +26,15 @@ import math
 import time
 
 import rclpy
-from geometry_msgs.msg import TransformStamped, Twist
+from geometry_msgs.msg import PoseStamped, TransformStamped, Twist
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Int32
 from tf2_ros import TransformBroadcaster
+
+from nav_msgs.msg import Path
 
 from fleetflow_interfaces.msg import RobotStatus, TransportTask
 from fleetflow_interfaces.srv import AcquireLease, ReleaseLease, RequestTask
@@ -119,6 +121,8 @@ class RobotController(Node):
         self.pub_status = self.create_publisher(RobotStatus, "/fleet/robots", state_qos(20))
         self.pub_done = self.create_publisher(Int32, "/factory/completed", state_qos(20))
         self.pub_failed = self.create_publisher(TransportTask, "/factory/task_status", state_qos(20))
+        # 剩余规划路径：RViz 可视化 / 录制回放都要用，所以照发不误（很小，2 Hz）
+        self.pub_path = self.create_publisher(Path, f"/{self.ns}/path", state_qos(2))
         if not self.self_kin:
             self.create_subscription(Odometry, f"/{self.ns}/odom", self.on_odom, sensor_qos(10))
             self.create_subscription(LaserScan, f"/{self.ns}/scan", self.on_scan, sensor_qos(5))
@@ -132,6 +136,7 @@ class RobotController(Node):
         self.create_timer(0.1, self.loop)
         self.create_timer(0.2, self.publish_status)
         self.create_timer(0.2, self.broadcast_tf)
+        self.create_timer(0.5, self.publish_path)
         self.get_logger().info(
             f"{self.ns} up at ({self.x:.1f},{self.y:.1f}) "
             f"[{'internal kinematics' if self.self_kin else 'gazebo odom'}]"
@@ -167,6 +172,24 @@ class RobotController(Node):
         s.battery = float(self.battery)
         s.odom_total = float(self.total_len) + float(self.seen_len)
         self.pub_status.publish(s)
+
+    def publish_path(self):
+        """发布剩余路径。
+
+        规划器给的是栅格 A* + 视线拉直后的折线，画出来就是车真正会走的路线；
+        没有它，任何可视化都只能画一条取货点到卸货点的直线，看起来像穿墙。
+        """
+        m = Path()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.header.frame_id = "map"
+        if not self.pursuit.finished:
+            for x, y in self.pursuit.remaining_path():
+                ps = PoseStamped()
+                ps.header = m.header
+                ps.pose.position.x, ps.pose.position.y = float(x), float(y)
+                ps.pose.orientation.w = 1.0
+                m.poses.append(ps)
+        self.pub_path.publish(m)
 
     def broadcast_tf(self):
         """map → robot/odom（出生点，静态）与 robot/odom → base_footprint（动态）。"""
