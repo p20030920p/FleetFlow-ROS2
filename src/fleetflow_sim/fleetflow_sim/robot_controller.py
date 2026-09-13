@@ -340,7 +340,9 @@ class RobotController(Node):
         self._traffic_t = time.time()
 
     # ---------- 交通指令执行 ----------
-    def _apply_traffic(self, v: float, w: float, now: float):
+    def _apply_traffic(self, v: float, w: float, now: float,
+                       local_v: float = None, local_w: float = None,
+                       pursuit_v: float = None, pursuit_w: float = None):
         """把协调层的约束落到 (v, w) 上。协调层决定"让不让"，这里只管执行。
 
         指令带时间戳：协调层若挂了或丢包，超过 1 秒就按"无指令"处理。
@@ -381,6 +383,35 @@ class RobotController(Node):
         if d.hold:
             self.yields += 1
             return 0.0, 0.0
+
+        # ------------------------------------------------------------------
+        # 协调层覆盖"本地把自己摁成零速"。
+        #
+        # 这是一个结构性缺陷：`_avoid` 先运行，它可以返回 (0,0)（相交让行、
+        # LiDAR 急停）；随后 `_apply_traffic` 只能**按比例缩放**速度，
+        # 0 乘任何系数还是 0 —— 于是协调层精心规划的让路路径**永远无法生效**。
+        # 实测（离线 tools/offline_fleet.py，两车窄通道对头）：整场 2999 tick
+        # 卡死，其中 `sat_escape_back` 占 2436 tick、纯追踪只跑了 4 tick；
+        # 允许协调层接管后，**同一场景 81 tick 双双到达**。
+        #
+        # Gazebo 里对应的现象就是"车原地打转 / 整场零产出"（第 32 节：
+        # esc 与 stall 同时涨到 87，一趟都走不完）。
+        #
+        # 因此：当本地避障把速度摁成 0，而协调层给了**让路路径**时，
+        # 由协调层接管，用低速沿让路路径走出去。协调层是全局视角，
+        # 它已经判定这条让路路径是安全的（is_position_safe_for_yield）。
+        # ------------------------------------------------------------------
+        if (local_v is not None and abs(local_v) < 1e-6
+                and abs(local_w or 0.0) < 1e-6
+                and d.has_yield_path and len(d.yield_x) >= 2):
+            self._overridden_by_traffic = getattr(
+                self, "_overridden_by_traffic", 0) + 1
+            if self._overridden_by_traffic in (1, 20, 100):
+                self.get_logger().info(
+                    f"{self.ns}: local avoidance stalled; coordinator yield path "
+                    f"takes over (#{self._overridden_by_traffic}, "
+                    f"reason={d.reason})")
+            return 0.20, 0.0
 
         if d.speed_scale < 1.0:
             v *= max(0.0, float(d.speed_scale))
@@ -700,10 +731,12 @@ class RobotController(Node):
             if tx is not None:
                 self._go_to(tx, ty, self.state, reset_strikes=False)
 
+        v_pt, w_pt = v, w                 # 纯追踪的期望速度（协调层接管时要用）
         v, w = self._avoid(v, w, now)
         # 交通指令放在局部避障之后：协调层是全局视角，它的 hold / 脱困
         # 必须能覆盖单车自己的局部判断，否则两台车会同时"礼貌地"往中间挤。
-        v, w = self._apply_traffic(v, w, now)
+        v, w = self._apply_traffic(v, w, now, local_v=v, local_w=w,
+                                   pursuit_v=v_pt, pursuit_w=w_pt)
         self._watchdog(now)
         self._v_last = v
         self._v_cmd = v
