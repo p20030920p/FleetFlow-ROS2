@@ -819,6 +819,13 @@ class RobotController(Node):
             return True
         return False
 
+    def _peer_near_my_goal(self, peer, tol: float = 0.75) -> bool:
+        """同伴是否就站在我正在前往的那个点附近（= 同泊位排队）。"""
+        tx, ty = self._target_xy()
+        if tx is None:
+            return False
+        return math.hypot(peer.x - tx, peer.y - ty) < tol
+
     def _front_peer(self, dist: float = 0.60, half_angle: float = 0.9):
         """正前方锥形内最近的同伴（没有则 None）。
 
@@ -993,6 +1000,24 @@ class RobotController(Node):
             bearing = math.atan2(dy, dx) - self.yaw
             ang = abs(math.atan2(math.sin(bearing), math.cos(bearing)))
             if ang > 0.9:                              # 不在前方约 52° 内
+                continue
+            # ------------------------------------------------------------
+            # 若这台同伴**本身就是我要去的那个点**（同一个取货/卸货位），
+            # 那它是在排队，不是在挡路 —— 这时不该再压制速度。
+            #
+            # 实测死锁（第 36 节，2 台车逐帧 110 s）：两个任务派到**同一个**
+            # 取货位 (3.40,6.00)，两车车心距恒为 0.72~0.79 m —— 恰好在
+            # 硬停阈值 0.66 m 之外、锥形减速阈值 1.09 m 之内这条带里。
+            # 于是：轮廓不相交 -> sat_yield_stop 不触发、没人脱困；
+            # 但锥形一直认为对方挡路 -> 速度被摁在 0.14~0.50，
+            # 后车偶尔拿到 -0.04 倒一下又回来，净位移为零，锁死 110 s。
+            #
+            # 两个距离判据之间形成了一条"既不硬停、又走不动"的死区。
+            # 车与目标同点的情况下，正确行为是让 id 小的先靠位、
+            # id 大的在后方等（或由协调层安排别的泊位），而不是互相压速。
+            # ------------------------------------------------------------
+            if self._peer_near_my_goal(p, tol=0.75):
+                self._abump("cone_standdown_goal")
                 continue
             if rid < self.rid:                          # 确定性优先级：id 小的先行通过
                 if d < stop:
