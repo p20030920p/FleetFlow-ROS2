@@ -46,8 +46,8 @@ ros2 launch fleetflow_sim factory.launch.py gui:=true        # with the Gazebo G
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # no Gazebo
 
 # Gazebo GUI and the floor plan live in a browser, side by side
-ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=8
-# open http://127.0.0.1:8080 — click the view for a full-screen floor plan
+ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=2
+# open http://127.0.0.1:8080 — the board streams on /stream and /map/stream (MJPEG)
 ```
 
 Both views read the same topics, so putting them next to each other is the quickest way to check
@@ -143,6 +143,25 @@ dominates every other term and the auction degenerates to FIFO.
 ---
 
 ## Results
+
+> **Fleet size is a design parameter, not a target.** Measured in Gazebo with the same
+> 24 units and the same 260 s window, more robots do *less* work — each overlap slows two
+> robots at once, and overlaps scale with density:
+
+| AGVs | delivered / 260 s | escape cmds | collisions | stall recoveries |
+|---:|---:|---:|---:|---:|
+| 8 | ~8 | 17 | 9 | 60+ |
+| 4 | 8 | **81** | 2 | **86** |
+| **2** | **13** | **0** | **0** | **7** |
+
+> Two robots reach the plant ceiling because the bottleneck is the task pipeline, not the
+> fleet. Demo and experiments therefore run at `num_robots:=2`; the plant is 26 × 16 m with
+> single-berth stations, so eight vehicles contend rather than produce. Full evidence,
+> including what did *not* work: [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
+
+![Live dashboard, two AGVs working](assets/readme/live-board-2agv.png)
+
+*Live board from Gazebo — `web:=true`, then `http://127.0.0.1:8080`, streamed on `/stream` and `/map/stream`.*
 
 5 policies × 3 seeds × 120 s, 80 units in circulation, identical plant — only the fleet differs.
 
@@ -240,10 +259,13 @@ the way docks already have them. Until that exists, Gazebo is not a usable throu
 and the animation at the top of this page is a wall-clock run in which vehicles pass closer than their
 bodies would allow under physics.
 
-**Not yet trustworthy.** Under Gazebo the chassis does not reproduce commanded motion: `cmd_vel` held at
-0.5 m/s for 15 s advances 0.17 m instead of 7.5 m. The coordination layer commands correctly (93 % of
-published commands non-zero, mean 0.30 m/s), so the fault is in the wheel/ground contact model. That is
-why the timing study runs on `logic_only.launch.py` — same coordination stack, wall-clock accurate.
+**Resolved — the chassis does reproduce commanded motion.** The earlier note here said `cmd_vel` at
+0.5 m/s advanced only 0.17 m in 15 s and blamed the wheel/ground contact model. Re-measured in the factory
+world with the ROS bridge out of the way, a commanded 0.6 m/s over 8 s moves the robot 4.085 m natively and
+3.952 m through ROS — 85 % and 82 % of the ideal, which is ordinary acceleration and settling. Contact,
+friction and bridging are all sound; the physics note above is retracted.
+
+What actually limited Gazebo was fleet size, not physics — see the table under *Results*.
 
 ---
 

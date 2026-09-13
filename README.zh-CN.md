@@ -46,8 +46,8 @@ ros2 launch fleetflow_sim factory.launch.py gui:=true        # 带 Gazebo 界面
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # 不启 Gazebo
 
 # Gazebo 界面 + 浏览器里的实时平面图，并排对照
-ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=8
-# 打开 http://127.0.0.1:8080 —— 点一下画面即进入全屏平面图
+ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=2
+# 打开 http://127.0.0.1:8080 —— 画面走 /stream 与 /map/stream（MJPEG 流）
 ```
 
 两边读的是同一批话题，所以并排放就能最快地确认平面图里的坐标、朝向、任务流向和三维场景是否一致。
@@ -138,7 +138,30 @@ J = α‖p_r − s_t‖ + β‖s_t − g_t‖ + γ(n_src + 1.5 n_dst)
 
 ## 结果
 
+> **车队规模是设计参数，不是目标。** 在 Gazebo 里用同样的 24 件物料、同样的 260 秒窗口实测：
+> 车越多产出反而越少 —— 每次轮廓相交会让两台车同时慢下来，而相交次数随密度上升：
+
+| 车队 | 260 秒完成 | 脱困指令 | 碰撞事件 | 卡死自愈 |
+|---:|---:|---:|---:|---:|
+| 8 台 | ~8 | 17 | 9 | 60+ |
+| 4 台 | 8 | **81** | 2 | **86** |
+| **2 台** | **13** | **0** | **0** | **7** |
+
+> 2 台车就能达到本厂产能上限，因为瓶颈是**任务管道**而不是车队。
+> 因此演示与实验统一用 `num_robots:=2`；厂房 26 × 16 m、每个工位只有一个泊位，
+> 8 台车只会互相争抢而不是增产。完整证据（含**没有**奏效的尝试）：
+> [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md)。
+
+![两台车运行中的实时看板](assets/readme/live-board-2agv.png)
+
+*Gazebo 实时看板 —— `web:=true` 后打开 `http://127.0.0.1:8080`，画面走 `/stream` 与 `/map/stream`。*
+
 5 策略 × 3 种子 × 120 秒，在制 80 件物料，工厂完全相同 —— 只有车队规模不同。
+
+> **这组数字的状态。** 它们是在协调层与控制器统一碰撞判据**之前**测的，
+> 当前代码下无法复现（80 物料、8 台车、`ca_ssi` 实测只有 6~8 件/分，而非 18.7）。
+> 表格保留作为历史记录，在重跑之前请视为**未经验证**。
+> 详见 [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md)。
 
 ![两个车队规模下的吞吐、时延、单任务里程与利用率](assets/readme/policy-comparison.png)
 
@@ -220,10 +243,12 @@ J = α‖p_r − s_t‖ + β‖s_t − g_t‖ + γ(n_src + 1.5 n_dst)
 通道需要像停靠位那样的**预约机制**。在它做出来之前，Gazebo 不是可用的吞吐演示环境 ——
 而本页顶部那段动图是墙钟模式的运行，其中车辆之间的通过距离，在物理下是不允许的。
 
-**尚不可信的部分。** Gazebo 下底盘不复现指令运动：`cmd_vel` 持续 0.5 m/s 下达 15 秒，
-只前进 0.17 m（理论 7.5 m）。协同层指令是正确的（93 % 的速度指令非零、均值 0.30 m/s），
-所以问题在轮地接触模型上。这也是计时实验走 `logic_only.launch.py` 的原因 ——
-协同栈完全相同，只是墙钟准确。
+**已解决 —— 底盘确实复现指令运动。** 这里原先写着"`cmd_vel` 持续 0.5 m/s 下达 15 秒只前进 0.17 m，
+问题在轮地接触模型"。把 ROS 桥接排除后重测：厂房世界里指令 0.6 m/s、持续 8 秒，
+原生通路实走 **4.085 m**、经 ROS 桥接实走 **3.952 m**，分别达到理想的 85% 与 82%，
+差值就是正常的加速与收敛。接触、摩擦、桥接都没有问题，上面那段结论**予以撤回**。
+
+真正限制 Gazebo 的是**车队规模**，不是物理 —— 见 <a href="#结果">结果</a> 里的表。
 
 ---
 
