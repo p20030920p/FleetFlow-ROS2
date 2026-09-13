@@ -44,7 +44,14 @@ cd ~/ros2_ws && colcon build --symlink-install && source install/setup.bash
 ros2 launch fleetflow_sim factory.launch.py                  # 只起 Gazebo 服务端
 ros2 launch fleetflow_sim factory.launch.py gui:=true        # 带 Gazebo 界面
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # 不启 Gazebo
+
+# Gazebo 界面 + 浏览器里的实时平面图，并排对照
+ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true   # 然后打开 :8080
 ```
+
+两边读的是同一批话题，所以并排放就能最快地确认平面图里的坐标、朝向、任务流向和三维场景是否一致。
+`web:=true` 在 `http://127.0.0.1:8080` 上提供 MJPEG 流；`web_port` / `web_size` / `web_every`
+可覆盖端口、分辨率与刷新间隔。单独运行：`ros2 run fleetflow_sim live_view`。
 
 `gui:=false`（默认）只起**一个**带 `--headless-rendering` 的服务端；`gui:=true` 只起**一个**界面。
 两者绝不同时起 —— 同时起两个服务端，就会出现"窗口开了但什么都不渲染"。如果上一次是被强杀而不是
@@ -254,7 +261,7 @@ FleetFlow-ROS2/
 ├── src/fleetflow_sim/
 │   ├── fleetflow_sim/              # layout · planner · factory_manager
 │   │                               # task_scheduler · traffic_manager
-│   │                               # robot_controller · policies · dashboard
+│   │                               # robot_controller · policies · dashboard · live_view
 │   ├── worlds/textile_factory.sdf  # 由脚本生成
 │   ├── urdf/agv.urdf.xacro
 │   └── launch/

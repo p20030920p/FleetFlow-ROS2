@@ -44,7 +44,15 @@ cd ~/ros2_ws && colcon build --symlink-install && source install/setup.bash
 ros2 launch fleetflow_sim factory.launch.py                  # Gazebo server only
 ros2 launch fleetflow_sim factory.launch.py gui:=true        # with the Gazebo GUI
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # no Gazebo
+
+# Gazebo GUI and the floor view live in a browser, side by side
+ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true   # then open :8080
 ```
+
+Both views read the same topics, so putting them next to each other is the quickest way to
+check that the map, headings and task flow agree with the 3D scene. `web:=true` serves an
+MJPEG stream at `http://127.0.0.1:8080`; `web_port`, `web_size` and `web_every` override the
+port, resolution and refresh interval. On its own: `ros2 run fleetflow_sim live_view`.
 
 `gui:=false` (default) starts **one** server with `--headless-rendering`; `gui:=true` starts **one**
 GUI. Never both — a second server is what makes a GUI window open and render nothing. If a run was
@@ -259,7 +267,7 @@ FleetFlow-ROS2/
 ├── src/fleetflow_sim/
 │   ├── fleetflow_sim/              # layout · planner · factory_manager
 │   │                               # task_scheduler · traffic_manager
-│   │                               # robot_controller · policies · dashboard
+│   │                               # robot_controller · policies · dashboard · live_view
 │   ├── worlds/textile_factory.sdf  # generated
 │   ├── urdf/agv.urdf.xacro
 │   └── launch/

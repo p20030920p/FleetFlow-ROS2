@@ -31,6 +31,7 @@ setup(
             "dashboard = fleetflow_sim.dashboard:main",
             "traffic_manager = fleetflow_sim.traffic_manager:main",
             "metrics = fleetflow_sim.metrics:main",
+            "live_view = fleetflow_sim.live_view:main",
         ],
     },
 )

@@ -125,6 +125,15 @@ def generate_launch_description():
         return [Node(package="ros_gz_bridge", executable="parameter_bridge",
                      name="ros_gz_bridge", output="screen", arguments=topics)]
 
+    # 实时网页看板：与 Gazebo 同源话题，便于并排比对映射是否正确
+    web_node = Node(
+        package=PKG, executable="live_view", name="fleet_live_view", output="screen",
+        parameters=[dict(port=LaunchConfiguration("web_port"),
+                         size=LaunchConfiguration("web_size"),
+                         refresh_s=LaunchConfiguration("web_every"))],
+        condition=IfCondition(LaunchConfiguration("web")),
+    )
+
     use_sim_time = LaunchConfiguration("use_sim_time")
     core = [
         Node(package=PKG, executable="factory_manager", name="factory_manager", output="screen",
@@ -160,6 +169,11 @@ def generate_launch_description():
         DeclareLaunchArgument("out_dir", default_value="/tmp/fleetflow_frames"),
         DeclareLaunchArgument("frame_every", default_value="3.0"),
         DeclareLaunchArgument("stuck_timeout", default_value="10.0"),
+        # 实时网页看板：gui:=true web:=true 可同时看 Gazebo 与 matplotlib 平面图
+        DeclareLaunchArgument("web", default_value="false"),
+        DeclareLaunchArgument("web_port", default_value="8080"),
+        DeclareLaunchArgument("web_every", default_value="1.5"),
+        DeclareLaunchArgument("web_size", default_value="1280x800"),
         DeclareLaunchArgument("battery_drain", default_value="0.55"),
         DeclareLaunchArgument("policy", default_value="nearest"),
         DeclareLaunchArgument("seed", default_value="7"),
@@ -167,7 +181,7 @@ def generate_launch_description():
                               description="桥接 /view_*/image（截图用，注意桥接端内存）"),
         DeclareLaunchArgument("run_label", default_value="gazebo"),
         DeclareLaunchArgument("metrics_dir", default_value="/tmp/fleetflow_metrics"),
-        gz_headless, gz_gui, OpaqueFunction(function=_bridge),
+        gz_headless, gz_gui, web_node, OpaqueFunction(function=_bridge),
         *core,
         OpaqueFunction(function=_robots),
     ])
