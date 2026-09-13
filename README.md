@@ -414,13 +414,22 @@ FleetFlow-ROS2/
 ### Where the numbers come from
 
 The coordination stack is identical in both launch modes, but the measurements above are
-taken with `logic_only.launch.py`. Under Gazebo the renderer holds the real-time factor well
-below 1 on a machine without a discrete GPU — the 525-model world plus four always-on camera
-sensors is enough to stall a 200 s wall-clock run before a single delivery completes, even
-though tasks are created, assigned and driven with zero errors. Every wall-clock metric —
-throughput, latency, watchdog timeouts — would then be scaled by a factor that has nothing
-to do with the allocation policy. Running the comparison headless keeps the variable being
-tested as the only variable.
+taken with `logic_only.launch.py`. Under Gazebo the renderer holds the real-time factor below
+1 on a machine without a discrete GPU, so every wall-clock metric — throughput, latency,
+watchdog timeouts — would be scaled by a factor that has nothing to do with the allocation
+policy. Running the comparison headless keeps the variable being tested as the only variable.
+
+The full stack does run, and the numbers are worth stating so nobody has to guess: 4 AGVs,
+24 units in circulation, 200 s of wall clock gives **35 tasks dispatched, 5 delivered, 0
+errors, and free memory never below 6.9 GB**. That is roughly five times slower than real
+time, which is exactly why it is not the measurement harness. One thing that used to make it much worse is worth recording,
+because it is easy to reproduce by accident: the world carried four camera sensors with
+`always_on` set, so Gazebo rendered 1280x800 offscreen images every frame **whether or not
+anyone was subscribed**. That alone was enough to hold the whole run below the point where a
+single delivery completed, and to push resident memory into the OOM killer. The cameras are
+now `always_on=0` — they render only while a subscriber is connected — and `factory.launch.py`
+does not bridge them unless `bridge_cameras:=true`. Idle cost drops accordingly, and
+`tools/capture_views.py` still works unchanged because subscribing is what wakes the sensor.
 
 Gazebo is still the reference for everything physical: contact, odometry, LiDAR, the
 multi-robot spawn and TF layout, and the renders in *The mill* above. If you want to

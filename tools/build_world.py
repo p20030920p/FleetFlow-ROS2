@@ -291,12 +291,18 @@ def control_room():
 
 # ------------------------------------------------------------------ 相机
 def camera(name, x, y, z, pitch, yaw, w=1600, h=1000, fov=1.05):
+    """机位相机。
+
+    ``always_on=0`` 是关键：相机只在有订阅者时才渲染。默认没人订阅，
+    于是完整仿真跑起来不用为 4 路 1600x1000 的离屏渲染买单（实测这一项就能把
+    实时因子压到远低于 1）；需要出图时桥接对应话题，传感器自动激活。
+    """
     return (f'<model name="{name}"><static>true</static>'
             f'<pose>{x} {y} {z} 0 {pitch:.4f} {yaw:.4f}</pose><link name="l">'
             f'<sensor name="cam" type="camera"><camera><horizontal_fov>{fov}</horizontal_fov>'
             f'<image><width>{w}</width><height>{h}</height></image>'
             f'<clip><near>0.1</near><far>200</far></clip></camera>'
-            f'<always_on>1</always_on><update_rate>2</update_rate><visualize>false</visualize>'
+            f'<always_on>0</always_on><update_rate>2</update_rate><visualize>false</visualize>'
             f'<topic>{name}/image</topic></sensor></link></model>')
 
 
