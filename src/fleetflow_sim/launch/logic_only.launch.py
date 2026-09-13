@@ -35,6 +35,7 @@ def _spawn(context, *args, **kwargs):
     actions = [
         Node(package=PKG, executable="factory_manager", name="factory_manager", output="screen",
              parameters=[dict(num_materials=materials,
+                              stale_task_timeout_s=float(LaunchConfiguration("stale_task_timeout").perform(context)),
                               max_tasks_in_flight=int(LaunchConfiguration("max_tasks_in_flight").perform(context)))]),
         Node(package=PKG, executable="traffic_manager", name="traffic_manager", output="screen"),
         Node(package=PKG, executable="task_scheduler", name="task_scheduler", output="screen",
