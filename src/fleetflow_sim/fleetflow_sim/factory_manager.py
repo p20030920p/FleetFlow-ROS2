@@ -72,6 +72,9 @@ class FactoryManager(Node):
         self.declare_parameter("num_materials", 10)
         self.declare_parameter("tick_hz", 10.0)
         self.declare_parameter("max_tasks_in_flight", 6)
+        # 任务在途超过这么久没有推进就回收（秒）。没有这个兜底，
+        # 一辆卡住的车会把派单预算永久占死 —— 见 in_flight 的注释。
+        self.declare_parameter("stale_task_timeout_s", 45.0)
 
         self.stations: dict[str, Station] = {}
         for key, z in layout.STORAGE.items():
@@ -96,7 +99,16 @@ class FactoryManager(Node):
         self.tasks: dict[int, TransportTask] = {}
         self.task_material: dict[int, int] = {}   # task_id -> material id
         self.next_task_id = 1
-        self.in_flight = 0
+        # in_flight 改为**由状态推导**，不再靠 += / -= 维护。
+        # 旧实现只在 on_completed 与 on_task_status(failed) 两处递减，而 failed
+        # 只有 robot_controller._abort_task 一个发布者、且只由看门狗触发。
+        # 于是一辆卡在 to_pickup 的车既不送达也不上报失败，in_flight 永久多记，
+        # 而 _spawn_transports 开头就是 `if in_flight >= limit: return` —— 工厂
+        # 从此不再派单。实测：tasks_created=6 而 done=1，in_flight≈5（上限 6），
+        # 整场只剩最初那几单，这正是"零产出"运行的共同特征。
+        self.in_flight = 0            # 缓存值，每帧由 _recount_in_flight() 刷新
+        self.task_started: dict[int, float] = {}   # task_id -> 首次在途时刻
+        self.reclaimed = 0
 
         self.pub_task = self.create_publisher(TransportTask, "/factory/tasks", 20)
         self.pub_machines = self.create_publisher(MachineState, "/factory/machines", 20)
@@ -115,9 +127,18 @@ class FactoryManager(Node):
 
     # ---------- 任务状态回调 ----------
     def on_task_status(self, msg: TransportTask):
-        self.tasks[msg.task_id] = msg
+        """只吸收**状态**，不要整体覆盖本地任务副本。
+
+        这里曾经写成 `self.tasks[msg.task_id] = msg`，而 /factory/task_status
+        的发布者不止一个（调度器派单时也发），于是工厂自己那份任务会被
+        外部 publish 的版本替换掉 —— 账本对象不该被外部覆盖。
+        """
+        local = self.tasks.get(msg.task_id)
+        if local is not None:
+            local.status = msg.status
+        else:
+            self.tasks[msg.task_id] = msg
         if msg.status == "failed":
-            self.in_flight = max(0, self.in_flight - 1)
             for name in (msg.source_name, msg.dest_name):
                 st = self.stations.get(name)
                 if st is not None and st.reserved == msg.task_id:
@@ -153,13 +174,51 @@ class FactoryManager(Node):
         task.status = "done"
         self.tasks[task.task_id] = task
         self.pub_task_status.publish(task)   # 让调度器释放这台车
-        self.in_flight = max(0, self.in_flight - 1)
+        # in_flight 由 _recount_in_flight() 推导，不再手动递减
+
+    # ---------- 在途记账 ----------
+    def _recount_in_flight(self, now: float):
+        """由任务状态重算 in_flight，并回收长期无进展的任务。
+
+        推导而非累加：只要有一条路径漏掉递减，累加器就会永久漂移，
+        而漂移的后果是**整座工厂停止派单**。
+        """
+        alive = 0
+        for tid, t in list(self.tasks.items()):
+            if t.status in ("done", "failed"):
+                self.task_started.pop(tid, None)
+                continue
+            alive += 1
+            self.task_started.setdefault(tid, now)
+        self.in_flight = alive
+
+        # 陈旧任务回收：真实仓储系统里就是"任务超时回收"，
+        # 不能指望每台车都老实上报自己的失败。
+        timeout = float(self.get_parameter("stale_task_timeout_s").value)
+        for tid, t in list(self.tasks.items()):
+            if t.status in ("done", "failed"):
+                continue
+            started = self.task_started.get(tid, now)
+            if now - started < timeout:
+                continue
+            self.reclaimed += 1
+            self.get_logger().warn(
+                f"task {tid} stale {now - started:.0f}s "
+                f"(src={t.source_name} dst={t.dest_name}) -> reclaim")
+            for name in (t.source_name, t.dest_name):
+                st = self.stations.get(name)
+                if st is not None and st.reserved == tid:
+                    st.reserved = None
+            t.status = "failed"
+            self.pub_task_status.publish(t)      # 让调度器释放这台车
+            self.task_started.pop(tid, None)
 
     # ---------- 主循环 ----------
     def tick(self):
         now = time.time()
         self._output_from_machines(now)
         self._feed_machines(now)
+        self._recount_in_flight(now)
         self._spawn_transports()
 
     def _output_from_machines(self, now):
@@ -260,7 +319,6 @@ class FactoryManager(Node):
         self.tasks[t.task_id] = t
         self.task_material[t.task_id] = mid
         self.next_task_id += 1
-        self.in_flight += 1
         src.reserved = t.task_id
         dst.reserved = t.task_id     # 目标工位同样要占住，否则多个任务会挤同一个槽位
         self.pub_task.publish(t)
@@ -296,6 +354,8 @@ class FactoryManager(Node):
                 running=sum(1 for t in self.tasks.values() if t.status in ("assigned", "running")),
                 done=sum(1 for t in self.tasks.values() if t.status == "done"),
                 tasks_created=self.next_task_id - 1,
+                in_flight=self.in_flight,
+                reclaimed=self.reclaimed,
             )
         )
         self.pub_summary.publish(s)
