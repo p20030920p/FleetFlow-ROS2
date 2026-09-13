@@ -47,6 +47,7 @@ from fleetflow_sim.traffic import (HULL_LEN, HULL_WID,  # noqa: E402
 MARGIN = 0.05
 CONE = True          # 是否启用前方锥形互让（_avoid 第 3 步）
 OVERRIDE = True      # 协调层是否可覆盖"本地把自己摁成零速"（第 34 节的修复）
+CREEP = True         # 锥形停车改为低速跟进（第 40 节的修法）
 V_MAX = 0.85
 W_MAX = 1.6
 
@@ -91,7 +92,9 @@ def front_cone(bot, bots, slow=1.30, stop=0.60):
         if other.rid < bot.rid:
             return (0.14 if d < stop else 0.40), f"front_slow(rid<{other.rid})"
         if d < stop * 0.8:
-            return 0.0, f"cone_back_stop({other.rid})"
+            # 修法：不再返回硬零（硬零会被上层当成"本地卡住"而锁死），
+            # 改为极低速跟进 —— 让位是暂时的，跟进才能走出死区。
+            return (0.12 if CREEP else 0.0), f"cone_back_creep({other.rid})"
         return 0.50, f"cone_back_slow({other.rid})"
     return None, None
 
@@ -197,7 +200,7 @@ def step_bot(bot, bots, dt=0.1, rng=None, noise=0.0):
 
 def run(n=2, seed=1, ticks=1200, verbose=False, noise=0.0, misalign=0.0,
         same_goal=False, east=False, cone=True, corridor=False,
-        override=True):
+        override=True, deadzone=False):
     """把 n 台车放在待命排里出发。
 
     `misalign`：出生朝向相对目标方向的随机偏置（弧度上限）。实车里
@@ -216,6 +219,19 @@ def run(n=2, seed=1, ticks=1200, verbose=False, noise=0.0, misalign=0.0,
         yaw0 = rng.uniform(-misalign, misalign) if misalign > 0 else 0.0
         bots.append(Bot(i, x, y, yaw0))
     # 目标：空筒库的几个泊位（与实车一致，都在西侧）
+    if deadzone:
+        # 第 36 节的实测现场：两台车都在待命排附近、朝向 +x（东），
+        # 目标是**同一个**取货位 (3.40, 6.00)（在西侧），车心距 0.75 m。
+        for i, b in enumerate(bots[:2]):
+            b.x = 8.16 + 0.69 * i
+            b.y = 1.79 - 0.25 * i
+            b.yaw = 0.0
+            b.goal = (3.40, 6.00)
+            b.yield_target = (b.x, b.y + 0.8)     # 让路点：横向退开
+        for b in bots[2:]:
+            b.goal = (3.40, 9.00)
+        return _run_ticks(bots, ticks)
+
     if corridor:
         # 窄通道对头：两台车在宽 1.15 m 的通道里相向而行。
         # 车体 0.44 m 宽，两侧各留 0.355 m —— 单台能过，两台迎面**过不去**。
@@ -243,17 +259,21 @@ def run(n=2, seed=1, ticks=1200, verbose=False, noise=0.0, misalign=0.0,
             else:
                 b.goal = goals[i % len(goals)]
 
+    return _run_ticks(bots, ticks, noise=noise, seed=seed)
+
+
+def _run_ticks(bots, ticks, noise=0.0, seed=1):
     tags = {}
     nrng = random.Random(seed * 7919)
+    t = 0
     for t in range(ticks):
         for b in bots:
             tag = step_bot(b, bots, rng=nrng, noise=noise)
             tags[tag] = tags.get(tag, 0) + 1
         if all(b.done for b in bots):
             break
-
     arrived = sum(1 for b in bots if b.done)
-    return dict(arrived=arrived, n=n, ticks=t + 1, tags=tags, bots=bots)
+    return dict(arrived=arrived, n=len(bots), ticks=t + 1, tags=tags, bots=bots)
 
 
 def main() -> int:
@@ -269,6 +289,9 @@ def main() -> int:
     ap.add_argument("--no-override", action="store_true",
                     help="关闭协调层对本地零速的覆盖（对照用）")
     ap.add_argument("--suite", action="store_true", help="跑全部失败场景，给出通过率")
+    ap.add_argument("--deadzone", action="store_true",
+                    help="复现第 36 节：目标同点、两车相距 0.75 m（硬停 0.66 与"
+                         "锥形 1.09 之间的死区）")
     ap.add_argument("--corridor", action="store_true",
                     help="窄通道对头相遇（两侧是机台，宽仅 1.15 m）")
     ap.add_argument("--east", action="store_true",
@@ -283,6 +306,7 @@ def main() -> int:
             ("三车同向鱼贯出库", dict(n=3, east=True, noise=1.0, misalign=3.14)),
             ("三车抢同一泊位", dict(n=3, same_goal=True, noise=1.0, misalign=3.14)),
             ("四车混行（不同目标）", dict(n=4, noise=1.0, misalign=3.14)),
+            ("同泊位 + 0.75m 死区", dict(n=2, deadzone=True)),
         ]
         seeds = 8
         print(f"离线仲裁套件（override={override}，每场景 {seeds} 个种子，"
@@ -318,7 +342,8 @@ def main() -> int:
             r = run(n=args.n, seed=s, noise=args.noise,
                     misalign=args.misalign, same_goal=args.same_goal,
                     east=args.east, cone=not args.no_cone,
-                    corridor=args.corridor, override=not args.no_override)
+                    corridor=args.corridor, override=not args.no_override,
+                    deadzone=args.deadzone)
             if r["arrived"] == 0:
                 zero += 1
             print(f"  seed={s:>3}  到达 {r['arrived']}/{r['n']}  "
@@ -330,7 +355,8 @@ def main() -> int:
     r = run(n=args.n, seed=args.seed, verbose=True, noise=args.noise,
             misalign=args.misalign, same_goal=args.same_goal,
             east=args.east, cone=not args.no_cone,
-            corridor=args.corridor, override=not args.no_override)
+            corridor=args.corridor, override=not args.no_override,
+                    deadzone=args.deadzone)
     print(f"{args.n} 台车 seed={args.seed}: 到达 {r['arrived']}/{r['n']}，"
           f"{r['ticks']} tick")
     print("分支命中:", dict(sorted(r["tags"].items(), key=lambda kv: -kv[1])))
