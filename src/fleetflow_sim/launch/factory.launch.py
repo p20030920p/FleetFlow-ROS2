@@ -17,8 +17,9 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
+from launch.conditions import IfCondition, LaunchConfigurationEquals  # noqa: F401
 from launch.conditions import IfCondition
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -80,15 +81,24 @@ def generate_launch_description():
     num_robots = LaunchConfiguration("num_robots")
 
     # ---- Gazebo Sim 8 ----
-    gz_args = ["-s", "-r"]
-    gz_args.append("--headless-rendering")
-    gz = ExecuteProcess(
-        cmd=["gz", "sim", *gz_args, world],
+    # 只允许**一个** Gazebo 进程，两种模式二选一：
+    #   gui:=false（默认）—— 只起服务端并加 --headless-rendering，供 CI 与批量截图
+    #   gui:=true         —— 起带界面的完整仿真
+    #
+    # 以前 gui 与 headless 是两个互不相干的开关，于是 `gui:=true` 而 headless 仍取默认
+    # true 时会**同时起两个服务端**：界面很可能连到那个带 --headless-rendering 的服务端，
+    # 表现就是窗口打开但什么都渲染不出来。只设 `headless:=false` 则两个都不起。
+    # 现在 headless 只作为兼容别名保留，取 false 等同于要界面。
+    gui_on = PythonExpression(
+        ["'", LaunchConfiguration("gui"), "' == 'true' or '",
+         LaunchConfiguration("headless"), "' == 'false'"])
+    gz_headless = ExecuteProcess(
+        cmd=["gz", "sim", "-s", "-r", "--headless-rendering", world],
         output="log",
-        condition=IfCondition(headless),
+        condition=IfCondition(PythonExpression(["not (", gui_on, ")"])),
     )
     gz_gui = ExecuteProcess(cmd=["gz", "sim", "-r", world], output="log",
-                            condition=IfCondition(LaunchConfiguration("gui")))
+                            condition=IfCondition(gui_on))
 
     # ---- 话题桥接 ----
     # 相机的桥接是可选的：ros_gz_bridge 桥接 Image 时若订阅端跟不上，图像缓冲会
@@ -139,8 +149,10 @@ def generate_launch_description():
     ]
 
     return LaunchDescription([
+        # 兼容旧写法：headless:=false 现在等价于 gui:=true
         DeclareLaunchArgument("headless", default_value="true"),
-        DeclareLaunchArgument("gui", default_value="false"),
+        DeclareLaunchArgument("gui", default_value="false",
+                              description="true = 带界面的 Gazebo；false = 无头服务端"),
         DeclareLaunchArgument("num_robots", default_value="4"),
         DeclareLaunchArgument("max_tasks_in_flight", default_value="6"),
         DeclareLaunchArgument("num_materials", default_value="12"),
@@ -155,7 +167,7 @@ def generate_launch_description():
                               description="桥接 /view_*/image（截图用，注意桥接端内存）"),
         DeclareLaunchArgument("run_label", default_value="gazebo"),
         DeclareLaunchArgument("metrics_dir", default_value="/tmp/fleetflow_metrics"),
-        gz, gz_gui, OpaqueFunction(function=_bridge),
+        gz_headless, gz_gui, OpaqueFunction(function=_bridge),
         *core,
         OpaqueFunction(function=_robots),
     ])

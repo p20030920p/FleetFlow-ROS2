@@ -41,10 +41,14 @@ mkdir -p ~/ros2_ws/src && cd ~/ros2_ws/src
 git clone https://github.com/p20030920p/FleetFlow-ROS2.git
 cd ~/ros2_ws && colcon build --symlink-install && source install/setup.bash
 
-ros2 launch fleetflow_sim factory.launch.py                    # Gazebo（无头）
-ros2 launch fleetflow_sim factory.launch.py headless:=false gui:=true
+ros2 launch fleetflow_sim factory.launch.py                  # 只起 Gazebo 服务端
+ros2 launch fleetflow_sim factory.launch.py gui:=true        # 带 Gazebo 界面
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # 不启 Gazebo
 ```
+
+`gui:=false`（默认）只起**一个**带 `--headless-rendering` 的服务端；`gui:=true` 只起**一个**界面。
+两者绝不同时起 —— 同时起两个服务端，就会出现"窗口开了但什么都不渲染"。如果上一次是被强杀而不是
+Ctrl-C，它的服务端会变成孤儿进程，下一次开界面可能连到它上面：`bash tools/gz_reset.sh` 可以清掉。
 
 相机话题**默认不桥接**。桥接的 `sensor_msgs/Image` 一旦订阅端跟不上，缓冲会无限增长 ——
 实测约 5 GB RSS，足以触发 OOM killer。相机是 `always_on=0`（有订阅才渲染），且一次只桥一路：

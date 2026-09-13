@@ -41,10 +41,15 @@ mkdir -p ~/ros2_ws/src && cd ~/ros2_ws/src
 git clone https://github.com/p20030920p/FleetFlow-ROS2.git
 cd ~/ros2_ws && colcon build --symlink-install && source install/setup.bash
 
-ros2 launch fleetflow_sim factory.launch.py                    # Gazebo, headless
-ros2 launch fleetflow_sim factory.launch.py headless:=false gui:=true
+ros2 launch fleetflow_sim factory.launch.py                  # Gazebo server only
+ros2 launch fleetflow_sim factory.launch.py gui:=true        # with the Gazebo GUI
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # no Gazebo
 ```
+
+`gui:=false` (default) starts **one** server with `--headless-rendering`; `gui:=true` starts **one**
+GUI. Never both — a second server is what makes a GUI window open and render nothing. If a run was
+killed rather than interrupted, its server survives as an orphan and the next GUI may attach to it:
+`bash tools/gz_reset.sh` clears them.
 
 Camera topics are **not bridged by default**. A bridged `sensor_msgs/Image` whose subscriber falls
 behind grows without bound — measured at ~5 GB RSS, enough to trigger the OOM killer. Cameras are
