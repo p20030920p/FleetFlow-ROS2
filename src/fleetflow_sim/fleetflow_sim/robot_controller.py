@@ -608,15 +608,50 @@ class RobotController(Node):
             f"{self.task.source_name} -> {self.task.dest_name}"
         )
 
-    def _go_to(self, gx, gy, state, reset_strikes: bool = True):
-        # 把当前同伴位置写进动态层，让 A* 直接绕开，而不是硬挤
+    def _plan_around_peers(self, gx, gy):
+        """规划一条路径，同伴只作为**逐渐放松**的软约束。
+
+        为什么不能"规划失败就放弃任务"：同伴的动态层半径是
+        `hull_r + grid.inflate = 0.636 m`，在 0.1 m 栅格上约 169 格/台。
+        车队一密（实测 16 台时）这些格子足以把通道整条封死，A* 在起点就被
+        围住并返回空路径，`_go_to` 随即 `_abort_task("no path")` ——
+        实测一次 150 s 的运行里出现 **81 次** no path 放弃，
+        出料率反而从 8 台的 13~14 单/分钟掉到 7.1。
+
+        正确做法是分级放宽：同伴是**会动的**，为它留一个永久禁区没有依据。
+        真正的避碰由 LiDAR 安全层与协调层的互让负责，路径规划只需要"尽量"
+        绕开同伴，而不是"绕不开就不干"。
+        """
         peers = [(p.x, p.y) for rid, p in self.peers.items() if rid != self.rid]
-        # 动态障碍层要按"同伴的外接圆 + 栅格本身的膨胀量"来画，
-        # 这样 A* 绕开同伴时留出的余量，和绕开墙、机台时是一样的。
-        self.grid.set_dynamic(peers, radius=self.hull_r + self.grid.inflate)
-        path = plan(self.grid, (self.x, self.y), (gx, gy))
-        self.grid.clear_dynamic()
+        full = self.hull_r + self.grid.inflate
+        attempts = (
+            ("绕开同伴", full),            # 首选：按整车外接圆 + 膨胀绕行
+            ("半程余量", max(self.hull_r, full / 2.0)),
+            ("仅按车体", self.hull_r),
+            ("忽略同伴", 0.0),             # 最后：只按静态障碍规划
+        )
+        for why, radius in attempts:
+            if radius > 0.0:
+                self.grid.set_dynamic(peers, radius=radius)
+            else:
+                self.grid.clear_dynamic()
+            path = plan(self.grid, (self.x, self.y), (gx, gy))
+            self.grid.clear_dynamic()
+            if path:
+                if why != "绕开同伴":
+                    # 只在退让时记一笔，便于观察车队密度是不是过高
+                    self._relaxed_plans = getattr(self, "_relaxed_plans", 0) + 1
+                    self.get_logger().info(
+                        f"{self.ns}: planned with {why} (radius {radius:.2f} m) "
+                        f"-> {len(path)} pts  [relaxed #{self._relaxed_plans}]")
+                return path
+        return []
+
+    def _go_to(self, gx, gy, state, reset_strikes: bool = True):
+        path = self._plan_around_peers(gx, gy)
         if not path:
+            # 连"忽略同伴"都无路可走 -> 这是真的没有通路（被机台/墙围死），
+            # 才值得放弃任务。
             self.get_logger().warn(f"{self.ns}: no path to ({gx:.1f},{gy:.1f})")
             self._abort_task("no path")
             return
