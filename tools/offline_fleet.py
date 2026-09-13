@@ -46,6 +46,7 @@ from fleetflow_sim.traffic import (HULL_LEN, HULL_WID,  # noqa: E402
 
 MARGIN = 0.05
 CONE = True          # 是否启用前方锥形互让（_avoid 第 3 步）
+OVERRIDE = True      # 协调层是否可覆盖"本地把自己摁成零速"（第 34 节的修复）
 V_MAX = 0.85
 W_MAX = 1.6
 
@@ -171,6 +172,22 @@ def step_bot(bot, bots, dt=0.1, rng=None, noise=0.0):
         bot.x += rng.gauss(0.0, noise * 0.02)
         bot.y += rng.gauss(0.0, noise * 0.02)
         bot.yaw += rng.gauss(0.0, noise * 0.05)
+    # 协调层接管：本地零速 + 有让路点时，用低速走出去（对应 _apply_traffic 的修复）
+    if (OVERRIDE and abs(v) < 1e-6 and abs(w) < 1e-6
+            and getattr(bot, "yield_target", None) is not None):
+        yt = bot.yield_target
+        dy = yt[1] - bot.y
+        dx = yt[0] - bot.x
+        if abs(dy) > 0.05:
+            v, w = 0.20, 0.0
+            bot.y += max(-0.06, min(0.06, dy))
+            tag = "OVERRIDE_side"
+        elif abs(dx) > 0.05:
+            v, w = 0.20, 0.0
+            bot.x += max(-0.06, min(0.06, dx))
+            tag = "OVERRIDE_fwd"
+        else:
+            bot.yield_target = None
     if abs(v) < 1e-6 and abs(w) < 1e-6:
         bot.stuck_ticks += 1
     else:
@@ -179,7 +196,8 @@ def step_bot(bot, bots, dt=0.1, rng=None, noise=0.0):
 
 
 def run(n=2, seed=1, ticks=1200, verbose=False, noise=0.0, misalign=0.0,
-        same_goal=False, east=False, cone=True, corridor=False):
+        same_goal=False, east=False, cone=True, corridor=False,
+        override=True):
     """把 n 台车放在待命排里出发。
 
     `misalign`：出生朝向相对目标方向的随机偏置（弧度上限）。实车里
@@ -187,8 +205,9 @@ def run(n=2, seed=1, ticks=1200, verbose=False, noise=0.0, misalign=0.0,
     纯逻辑因为积分理想、路径恰好顺着头朝向，几乎不会触发"先对准"分支。
     `same_goal`：让所有车抢**同一个**泊位，制造必然的收敛冲突。
     """
-    global CONE
+    global CONE, OVERRIDE
     CONE = cone
+    OVERRIDE = override
     rng = random.Random(seed)
     bots = []
     for i in range(n):
@@ -208,12 +227,21 @@ def run(n=2, seed=1, ticks=1200, verbose=False, noise=0.0, misalign=0.0,
             else:
                 b.x, b.y, b.yaw = 6.60, 6.00, math.pi
                 b.goal = (5.20, 6.00)
+            # 每台车都有一个"让路点"：横向退到通道一侧（真实系统里由协调层规划）
+            b.yield_target = (b.x, 5.10) if abs(b.y - 6.0) < 0.1 else None
         # 通道两侧的墙（机台与待命位边界），用 y 范围表示
     else:
         goals = ([(22.95, 5.50 + 2.5 * i) for i in range(4)] if east
                  else [(3.40, 3.00), (3.40, 6.00), (3.40, 9.00), (3.40, 12.00)])
         for i, b in enumerate(bots):
-            b.goal = goals[0] if same_goal else goals[i % len(goals)]
+            if same_goal:
+                # 同一泊位只能停一台。真实系统靠工位租约保证独占：
+                # 没拿到租约的车停在**泊位旁的队列位**，而不是全挤向同一点。
+                # 离线这里简化为：第 i 台车在泊位前方 i*0.9 m 处待命。
+                gx, gy = goals[0]
+                b.goal = (gx + 0.9 * i, gy + 0.15 * i) if i else (gx, gy)
+            else:
+                b.goal = goals[i % len(goals)]
 
     tags = {}
     nrng = random.Random(seed * 7919)
@@ -238,12 +266,48 @@ def main() -> int:
                     help="出生朝向相对目标的随机偏置上限（弧度）")
     ap.add_argument("--same-goal", action="store_true", help="所有车抢同一泊位")
     ap.add_argument("--no-cone", action="store_true", help="关闭前方锥形互让")
+    ap.add_argument("--no-override", action="store_true",
+                    help="关闭协调层对本地零速的覆盖（对照用）")
+    ap.add_argument("--suite", action="store_true", help="跑全部失败场景，给出通过率")
     ap.add_argument("--corridor", action="store_true",
                     help="窄通道对头相遇（两侧是机台，宽仅 1.15 m）")
     ap.add_argument("--east", action="store_true",
                     help="目标改在待命排**东侧**（模拟新车在东侧取料，"
                          "全排必须同向鱼贯而出）")
     args = ap.parse_args()
+
+    if args.suite:
+        override = not args.no_override
+        scenarios = [
+            ("两车对头（窄通道）", dict(n=2, corridor=True)),
+            ("三车同向鱼贯出库", dict(n=3, east=True, noise=1.0, misalign=3.14)),
+            ("三车抢同一泊位", dict(n=3, same_goal=True, noise=1.0, misalign=3.14)),
+            ("四车混行（不同目标）", dict(n=4, noise=1.0, misalign=3.14)),
+        ]
+        seeds = 8
+        print(f"离线仲裁套件（override={override}，每场景 {seeds} 个种子，"
+              f"上限 3000 tick）\n")
+        print(f"{'场景':<24} {'通过':>7} {'平均 tick':>10}")
+        total_fail = 0
+        for name, kw in scenarios:
+            ok = 0
+            ticks = []
+            for sd in range(1, seeds + 1):
+                r = run(seed=sd, ticks=3000, override=override, **kw)
+                full = r["arrived"] == r["n"]
+                ok += full
+                ticks.append(r["ticks"])
+            total_fail += (seeds - ok)
+            import statistics
+            avg = int(statistics.fmean(ticks))
+            flag = "" if ok == seeds else "   <-- 有卡死"
+            print(f"{name:<24} {ok:>4}/{seeds} {avg:>10}{flag}")
+        print()
+        if total_fail:
+            print(f"仍有 {total_fail} 个种子卡死 —— 这就是要在离线继续修的地方。")
+        else:
+            print("全部场景全部种子通过。可以进 Gazebo 验证了。")
+        return 0
 
     if args.sweep:
         print(f"离线扫描：{args.n} 台车 × {args.sweep} 个种子  "
@@ -254,7 +318,7 @@ def main() -> int:
             r = run(n=args.n, seed=s, noise=args.noise,
                     misalign=args.misalign, same_goal=args.same_goal,
                     east=args.east, cone=not args.no_cone,
-                    corridor=args.corridor)
+                    corridor=args.corridor, override=not args.no_override)
             if r["arrived"] == 0:
                 zero += 1
             print(f"  seed={s:>3}  到达 {r['arrived']}/{r['n']}  "
@@ -265,7 +329,8 @@ def main() -> int:
 
     r = run(n=args.n, seed=args.seed, verbose=True, noise=args.noise,
             misalign=args.misalign, same_goal=args.same_goal,
-            east=args.east, cone=not args.no_cone, corridor=args.corridor)
+            east=args.east, cone=not args.no_cone,
+            corridor=args.corridor, override=not args.no_override)
     print(f"{args.n} 台车 seed={args.seed}: 到达 {r['arrived']}/{r['n']}，"
           f"{r['ticks']} tick")
     print("分支命中:", dict(sorted(r["tags"].items(), key=lambda kv: -kv[1])))
