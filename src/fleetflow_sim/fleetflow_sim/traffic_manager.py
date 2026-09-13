@@ -1,21 +1,20 @@
-"""交通管理：工位与充电桩的独占租约。
+"""交通管理节点：工位租约 + 完整交通协调层。
 
-为什么需要它
-------------
-只有"逻辑上把任务分给不同的车"是不够的——物理上两台车仍可能同时压向同一个
-工位，或者互相堵在门口。真实车队里这件事由交通管理（traffic management）
-负责，这里是它的最小可用实现。
+两层职责，别混淆
+----------------
+1. **资源层（租约）**：保证同一个工位/充电桩同一时刻只有一台车停靠。
+   它破坏的是死锁四条件里的"持有并等待"，所以不会出现资源环死锁。
+2. **运动层（``traffic.TrafficLayer``）**：租约管不到的部分 —— 通道里对向
+   相遇、多车挤向同一完工位、被压成 0 速之后没人管。这一层是从 ROS 1 版
+   完整移植过来的（时空预约、走廊单向令牌、优先级反饥饿、冲突裁决、
+   安全让路、双机分离、紧急刹停、卡死自愈）。
 
-死锁是怎么被结构性排除的
-------------------------
-经典的死锁四个条件里，本设计直接破坏"持有并等待"（hold and wait）：
-
-* 一台车**同时最多只持有一个资源**：它正在停靠的那个工位，或正在接近的那个工位；
-* 离开工位时立刻释放，因此**在途车辆不持有任何资源**；
-* 申请目标租约被拒时，它就停在自己当前位置等，而不是"抱着 A 去抢 B"。
-
-不持有资源就不会形成循环等待，因此系统不会死锁——这比事后做死锁检测更省事。
-租约还带 TTL 兜底：车辆异常退出后，它占的工位会自动过期回收。
+为什么拆成"协调层下指令、控制器执行"
+------------------------------------
+ROS 1 里调度器和导航同进程，协调层直接写 ``cmd_vel``。ROS 2 把导航拆到了
+每台车的控制器（它才拿得到 LiDAR 与纯追踪状态），所以协调层改为发布
+``/robot_i/traffic``（``TrafficDirective``）：协调层仍然决定**谁让谁、
+什么时候走、往哪让**，控制器只负责把这些约束变成轮速。
 """
 from __future__ import annotations
 
@@ -24,12 +23,15 @@ from collections import deque
 
 import rclpy
 from rclpy.node import Node
+from nav_msgs.msg import Path
 from std_msgs.msg import String
 
+from fleetflow_interfaces.msg import RobotStatus, TrafficDirective
 from fleetflow_interfaces.srv import AcquireLease, ReleaseLease
 
 from . import layout
 from .qos import state_qos
+from .traffic import CORRIDOR_ZONES, REGIONS, TrafficLayer
 
 
 class Lease:
@@ -46,6 +48,8 @@ class TrafficManager(Node):
         super().__init__("traffic_manager")
         self.declare_parameter("lease_ttl_s", 120.0)
         self.declare_parameter("max_wait_s", 45.0)
+        self.declare_parameter("rate_hz", 10.0)
+        self.declare_parameter("num_robots", 8)
 
         self.ttl = float(self.get_parameter("lease_ttl_s").value)
         self.leases: dict[str, Lease] = {}
@@ -53,21 +57,99 @@ class TrafficManager(Node):
         self.granted_total = 0
         self.rejected_total = 0
         self.expired_total = 0
-        self.waits: dict[int, float] = {}          # robot_id -> 开始等待的时刻
+        self.waits: dict[int, float] = {}
 
         known = list(layout.all_station_points()) + ["charger_0", "charger_1"]
         self.known_resources = set(known)
 
+        # ---- 交通协调层 ----
+        n = int(self.get_parameter("num_robots").value)
+        self.layer = TrafficLayer(n, logger=self.get_logger())
+        self.peers: dict[int, RobotStatus] = {}
+        self.last_seen: dict[int, float] = {}
+
+        # ---- ROS 接口 ----
         self.create_service(AcquireLease, "/traffic/acquire", self.on_acquire)
         self.create_service(ReleaseLease, "/traffic/release", self.on_release)
+
+        self.create_subscription(RobotStatus, "/fleet/robots", self.on_status, state_qos(40))
+        self.directive_pubs: dict[int, object] = {}
+        for i in range(n):
+            self.directive_pubs[i] = self.create_publisher(
+                TrafficDirective, f"/robot_{i}/traffic", state_qos(10))
+            self.create_subscription(
+                Path, f"/robot_{i}/path", lambda m, r=i: self.on_path(m, r), state_qos(5))
+
         self.pub = self.create_publisher(String, "/traffic/status", state_qos(5))
+        self.pub_directives = self.create_publisher(
+            TrafficDirective, "/traffic/directives", state_qos(40))
+
         self.create_timer(1.0, self.sweep)
         self.create_timer(2.0, self.report)
+        rate = max(1.0, float(self.get_parameter("rate_hz").value))
+        self.create_timer(1.0 / rate, self.tick)
+
         self.get_logger().info(
-            f"traffic_manager up · {len(known)} resources · lease ttl {self.ttl:.0f}s"
+            f"traffic_manager up · {len(known)} resources · lease ttl {self.ttl:.0f}s · "
+            f"coordination {rate:.0f} Hz · regions={len(REGIONS)} corridors={len(CORRIDOR_ZONES)}"
         )
 
-    # ---------- 服务 ----------
+    # ---------- 状态输入 ----------
+    def on_status(self, m: RobotStatus):
+        rid = int(m.robot_id)
+        self.peers[rid] = m
+        self.last_seen[rid] = time.time()
+        target = (m.target_x, m.target_y) if getattr(m, "has_target", False) else None
+        self.layer.update_robot(
+            rid, m.x, m.y, m.yaw, getattr(m, "speed", 0.0), m.state, target,
+            self.layer.path.get(rid, []),
+        )
+        if rid not in self.directive_pubs and rid < 32:
+            self.directive_pubs[rid] = self.create_publisher(
+                TrafficDirective, f"/robot_{rid}/traffic", state_qos(10))
+
+    def on_path(self, m: Path, rid: int):
+        self.layer.update_robot(
+            rid,
+            self.layer.pos.get(rid, (0.0, 0.0))[0],
+            self.layer.pos.get(rid, (0.0, 0.0))[1],
+            self.layer.yaw.get(rid, 0.0),
+            self.layer.speed.get(rid, 0.0),
+            self.layer.state.get(rid, "idle"),
+            self.layer.target.get(rid),
+            [(p.pose.position.x, p.pose.position.y) for p in m.poses],
+        )
+
+    # ---------- 协调周期 ----------
+    def tick(self):
+        now = time.time()
+        # 掉线清理：15 秒没有状态上报就当它不在了，否则它的预约会永久占位
+        for rid, t in list(self.last_seen.items()):
+            if now - t > 15.0:
+                self.layer.forget_robot(rid)
+                self.last_seen.pop(rid, None)
+
+        directives = self.layer.tick(now)
+        for rid, d in directives.items():
+            pub = self.directive_pubs.get(rid)
+            if pub is None:
+                continue
+            msg = TrafficDirective()
+            msg.robot_id = rid
+            msg.speed_scale = float(d.speed_scale)
+            msg.hold = bool(d.hold)
+            msg.has_escape = bool(d.has_escape)
+            msg.escape_v = float(d.escape_v)
+            msg.escape_w = float(d.escape_w)
+            msg.replan = bool(d.replan)
+            msg.has_yield_path = bool(d.has_yield_path)
+            msg.yield_x = [float(p[0]) for p in d.yield_path]
+            msg.yield_y = [float(p[1]) for p in d.yield_path]
+            msg.reason = d.reason
+            pub.publish(msg)
+            self.pub_directives.publish(msg)
+
+    # ---------- 租约服务 ----------
     def on_acquire(self, req: AcquireLease.Request, res: AcquireLease.Response):
         rid, resource = int(req.robot_id), req.resource
         now = time.time()
@@ -85,7 +167,6 @@ class TrafficManager(Node):
             res.granted, res.holder, res.message = True, rid, "granted"
             return res
 
-        # 被占：拒绝并让调用方稍后重试（非阻塞，避免服务端持有上下文）
         q = self.waiting.setdefault(resource, deque())
         if rid not in q:
             q.append(rid)
@@ -115,18 +196,24 @@ class TrafficManager(Node):
     def sweep(self):
         now = time.time()
         for name, lease in list(self.leases.items()):
-            if now - lease.since > lease.ttl:
+            if now - lease.since > self.ttl:
                 self.leases.pop(name, None)
                 self.expired_total += 1
                 self.get_logger().warn(f"lease expired: {name} (was robot {lease.robot_id})")
 
     def report(self):
-        s = String()
-        s.data = (
+        s = self.layer.stats()
+        txt = (
             f"traffic: held={len(self.leases)} waiting={sum(len(q) for q in self.waiting.values())} "
-            f"granted={self.granted_total} rejected={self.rejected_total} expired={self.expired_total}"
+            f"granted={self.granted_total} rejected={self.rejected_total} expired={self.expired_total} "
+            f"| deadlock={s['deadlock']} yield={s['yield_total']} fallback={s['yield_fallback']} "
+            f"sep={s['pair_separation']} embrake={s['emergency_break']} esc={s['escape']} "
+            f"coll={s['collision_event']} corridor={s['corridor_grant']}/{s['corridor_reuse']} "
+            f"stall={s['stall_replan']}/{s['stall_near_target']} anti_starve={s['starvation_prevent']}"
         )
-        self.pub.publish(s)
+        msg = String()
+        msg.data = txt
+        self.pub.publish(msg)
 
 
 def main():

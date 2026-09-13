@@ -29,13 +29,17 @@ from std_msgs.msg import Int32, String
 from fleetflow_interfaces.msg import RobotStatus, TransportTask
 
 from .qos import state_qos
+from .traffic import HULL_LEN, HULL_WID, obb_corners, obb_gap
 
 TASK_FIELDS = ["task_id", "material", "source", "dest", "robot_id",
                "created_s", "assigned_s", "delivered_s", "latency_s", "travel_cost"]
 RUN_FIELDS = ["run_label", "policy", "num_robots", "wall_s", "makespan_s", "completed",
               "throughput_per_min", "latency_mean_s", "latency_p50_s", "latency_p95_s",
               "utilisation_mean", "distance_total_m", "traffic_rejected", "traffic_expired",
-              "min_robot_distance_m", "near_miss_events", "charging_events", "reassignments"]
+              "min_robot_distance_m", "near_miss_events", "charging_events", "reassignments",
+              # 轮廓净距与真实重叠次数：车心距在密集车队里没有安全含义（两车并排
+              # 车心距本来就只有 0.44 m），新增这两列才是可与控制器判据对照的指标。
+              "min_robot_gap_m", "overlap_events"]
 
 
 class MetricsRecorder(Node):
@@ -67,6 +71,8 @@ class MetricsRecorder(Node):
         self._last_t: dict[int, float] = {}
         self.min_pair_dist = 1e9
         self.near_misses = 0
+        self.min_gap = 1e9
+        self.overlaps = 0
         self._in_near = set()
         self.traffic_rejected = 0
         self.traffic_expired = 0
@@ -153,6 +159,15 @@ class MetricsRecorder(Node):
 
     # ---------- 计算 ----------
     def tick(self):
+        """统计车车安全裕度。
+
+        判据必须与控制器一致：用**有向矩形之间的净距**，而不是车心距。
+        车心距在密集车队里没有意义 —— 两车并排本来只要 0.44 m 车心距就够，
+        而 0.55 m 的"近失"阈值会把合法的并排通行记成危险；反过来，两车
+        对头接近时车心距 0.6 m 可能已经撞上了（车长 0.56 m）。所以：
+          * min_robot_gap_m：全队在整个运行期的最小轮廓净距，负值 = 真的重叠
+          * overlap_events：轮廓实际相交的次数（这才是"碰撞"）
+        """
         ids = list(self.robots)
         for i in range(len(ids)):
             for j in range(i + 1, len(ids)):
@@ -160,11 +175,16 @@ class MetricsRecorder(Node):
                 d = math.hypot(a.x - b.x, a.y - b.y)
                 if d < self.min_pair_dist:
                     self.min_pair_dist = d
+                A = obb_corners(a.x, a.y, a.yaw, HULL_LEN / 2, HULL_WID / 2)
+                B = obb_corners(b.x, b.y, b.yaw, HULL_LEN / 2, HULL_WID / 2)
+                gap = obb_gap(A, B)
+                if gap < self.min_gap:
+                    self.min_gap = gap
                 key = (ids[i], ids[j])
-                if d < self.near_miss and d > 1e-6:
-                    if key not in self._in_near:      # 只在进入近距的那一刻计一次
+                if gap < 0.0:
+                    if key not in self._in_near:      # 只在开始重叠那一刻计一次
                         self._in_near.add(key)
-                        self.near_misses += 1
+                        self.overlaps += 1
                 else:
                     self._in_near.discard(key)
 
@@ -192,6 +212,8 @@ class MetricsRecorder(Node):
             traffic_rejected=self.traffic_rejected, traffic_expired=self.traffic_expired,
             min_robot_distance_m=round(self.min_pair_dist, 3) if self.min_pair_dist < 1e8 else "",
             near_miss_events=self.near_misses,
+            min_robot_gap_m=round(self.min_gap, 3) if self.min_gap < 1e8 else "",
+            overlap_events=self.overlaps,
             charging_events=self.charging, reassignments=self.reassign,
         )
 
@@ -203,7 +225,8 @@ class MetricsRecorder(Node):
             w.writerow(snap)
         self.get_logger().info(
             f"metrics: {snap['completed']} done · makespan={snap['makespan_s']}s · "
-            f"throughput={snap['throughput_per_min']}/min · min_gap={snap['min_robot_distance_m']}m"
+            f"throughput={snap['throughput_per_min']}/min · min_gap={snap['min_robot_gap_m']}m · "
+            f"overlaps={snap['overlap_events']}"
         )
 
 

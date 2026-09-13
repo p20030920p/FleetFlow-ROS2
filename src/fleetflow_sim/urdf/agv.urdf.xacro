@@ -133,7 +133,7 @@
   <gazebo reference="lidar_link">
     <sensor name="lidar" type="gpu_lidar">
       <topic>/robot_$(arg robot_id)/scan</topic>
-      <update_rate>8</update_rate>
+      <update_rate>8.0</update_rate>
       <always_on>1</always_on>
       <visualize>false</visualize>
       <lidar>
@@ -151,23 +151,18 @@
   </gazebo>
 
   <gazebo reference="base_link"><material>Gazebo/FlatBlack</material></gazebo>
-  <!-- 驱动轮接触参数：不写这些，圆柱轮与地面是线接触，默认摩擦下会明显打滑。
-       实测：指令 0.15 m/s 时 20 秒只走了 0.19 m（应走 3 m），差两个数量级，
-       整条线因此在 Gazebo 里几乎不产出。 -->
-  <gazebo reference="left_wheel">
-    <material>Gazebo/Black</material>
-    <surface>
-      <friction><ode><mu>1.8</mu><mu2>1.8</mu2></ode></friction>
-      <contact><ode><kp>1000000</kp><kd>100</kd><max_vel>0.1</max_vel><min_depth>0.001</min_depth></ode></contact>
-    </surface>
-  </gazebo>
-  <gazebo reference="right_wheel">
-    <material>Gazebo/Black</material>
-    <surface>
-      <friction><ode><mu>1.8</mu><mu2>1.8</mu2></ode></friction>
-      <contact><ode><kp>1000000</kp><kd>100</kd><max_vel>0.1</max_vel><min_depth>0.001</min_depth></ode></contact>
-    </surface>
-  </gazebo>
+  <gazebo reference="left_wheel"><material>Gazebo/Black</material></gazebo>
+  <gazebo reference="right_wheel"><material>Gazebo/Black</material></gazebo>
+  <!-- 摩擦系数在这里**写不进去**，留个记录免得再试一遍：
+       sdformat 的 URDF 解析器会把摩擦信息整段丢掉 —— 无论是
+       <gazebo reference="link"><mu1>/<mu2>，还是 <collision> 里的
+       <surface><friction>，转换后都**不出现**在 SDF 里，而且不报错。
+       验证方法：gz sdf -p 转一个最小 URDF，输出里既没有 <surface>
+       也没有 <mu>。所以轮子只能拿 SDF 默认摩擦（1.0）。
+       这也说明"轮子打滑"不是厂房里那台车不走的根因 —— 作为对照，
+       把同一台车放进只有一块平地的最小世界，用 gz 原生话题发 0.6 m/s，
+       7 秒实走 3.57 m（≈0.6 m/s），轮速恰好 8.000 rad/s，完全正常。
+       真正的排查结论见 tools/ 与 README 的"排查记录"。 -->
   <!-- 万向轮是被动支撑，摩擦要低，否则会拖着车不让走 -->
   <gazebo reference="caster">
     <mu1>0.05</mu1><mu2>0.05</mu2>

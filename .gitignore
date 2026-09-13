@@ -6,3 +6,4 @@ __pycache__/
 .pytest_cache/
 experiments/**/frames/
 experiments/**/launch.log
+.workbench/

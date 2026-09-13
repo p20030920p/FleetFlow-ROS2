@@ -36,7 +36,7 @@ from tf2_ros import TransformBroadcaster
 
 from nav_msgs.msg import Path
 
-from fleetflow_interfaces.msg import RobotStatus, TransportTask
+from fleetflow_interfaces.msg import RobotStatus, TrafficDirective, TransportTask
 from fleetflow_interfaces.srv import AcquireLease, ReleaseLease, RequestTask
 
 from . import layout
@@ -94,6 +94,8 @@ class RobotController(Node):
         self.declare_parameter("start_yaw", 0.0)
         self.declare_parameter("dwell_s", 1.2)
         self.declare_parameter("use_internal_kinematics", False)
+        # 出库错峰：第 i 台车等 i*start_stagger_s 秒再开始领任务
+        self.declare_parameter("start_stagger_s", 0.0)
         # 安全 / 车队行为
         # 安全距离必须由**车体几何**推出来，不能拍一个数：
         # 车体 0.56×0.44 m，外接圆半径 0.356 m，所以两车在任意朝向下不重叠
@@ -108,21 +110,42 @@ class RobotController(Node):
         # 这两个值保持与 experiments/ 里那批实验一致，否则文档中的数字就与代码脱节。
         self.declare_parameter("avoid_slow_m", 1.30)
         self.declare_parameter("avoid_stop_m", 0.60)
+        # 前方锥形互让（本地礼貌限速）。协调层已经接管车车让行，默认关闭；
+        # 打开可用于对照实验（见 _avoid 第 3 步的注释）。
+        self.declare_parameter("avoid_cones", False)
         self.declare_parameter("scan_stop_m", 0.38)
         self.declare_parameter("stuck_timeout_s", 10.0)
         # 电量
         self.declare_parameter("battery_drain_per_m", 0.55)
         # 车体几何：LiDAR 安装点相对车体中心的纵向偏移，用于逐角度屏蔽自身回波
         self.hull_len, self.hull_wid, self.lidar_dx = 0.56, 0.44, 0.18
+        # 凸出车体矩形、且落在雷达扫描平面上的部件，按 (cx, cy, r) 圆列出。
+        # 数值取自 agv.urdf.xacro：轮子 origin y=±sep/2=±0.21、半径 0.075
+        # （轮心 z=-0.07，扫描面 z≈0.115 与轮相割，所以确实会被扫到）；
+        # 万向轮在车尾 (x=-0.22, r=0.045)，同样列出以覆盖车尾回波。
+        sep = 0.42
+        self.self_circles = [
+            (0.0, +sep / 2, 0.075),
+            (0.0, -sep / 2, 0.075),
+            (-0.22, 0.0, 0.045),
+        ]
         self.declare_parameter("scan_self_mask_m", 0.06)
         self.declare_parameter("battery_low_pct", 30.0)
         self.declare_parameter("battery_resume_pct", 88.0)
         self.declare_parameter("charge_rate_pct_s", 3.0)
+        # 排障开关：把 _avoid 各分支的累计次数打出来。默认关，避免刷屏。
+        self.declare_parameter("debug_avoid", False)
+        # 排障开关：把"前方有近障碍"的原始 scan 帧写到这个目录（空=关）
+        self.declare_parameter("debug_scan_dir", "")
 
         self.rid = int(self.get_parameter("robot_id").value)
         self.ns = f"robot_{self.rid}"
         self.dwell = float(self.get_parameter("dwell_s").value)
         self.self_kin = bool(self.get_parameter("use_internal_kinematics").value)
+        self.avoid_cones = bool(self.get_parameter("avoid_cones").value)
+        # 错峰起飞时刻：按 id 递增，避免整排出库时同时抢道
+        stagger = float(self.get_parameter("start_stagger_s").value)
+        self.start_at = time.time() + stagger * self.rid
 
         self.x = float(self.get_parameter("start_x").value)
         self.y = float(self.get_parameter("start_y").value)
@@ -151,8 +174,20 @@ class RobotController(Node):
         self._stuck_strikes = 0
         # LiDAR 安全
         self._scan_min = 99.0
+        self._scan_left = 99.0
+        self._scan_front = 99.0
+        self._scan_right = 99.0
         # 车队
         self.peers: dict[int, RobotStatus] = {}
+        # _avoid 分支计数：默认只累积，由 debug_dump 参数决定是否打出来
+        self._avoid_hist: dict[str, int] = {}
+        self._dbg_dir = str(self.get_parameter("debug_scan_dir").value)
+        self._dbg_frames: list = []
+        # 交通协调层下发的指令与它的时间戳
+        self._traffic: TrafficDirective | None = None
+        self._traffic_t = 0.0
+        self._traffic_replan_t = 0.0
+        self._yield_active = False
 
         # ---- ROS 接口 ----
         self.pub_cmd = self.create_publisher(Twist, f"/{self.ns}/cmd_vel", command_qos(10))
@@ -165,6 +200,9 @@ class RobotController(Node):
             self.create_subscription(Odometry, f"/{self.ns}/odom", self.on_odom, sensor_qos(10))
             self.create_subscription(LaserScan, f"/{self.ns}/scan", self.on_scan, sensor_qos(5))
         self.create_subscription(RobotStatus, "/fleet/robots", self.on_peer, state_qos(20))
+        # 交通协调层的指令：谁让谁、什么时候停、往哪让。控制器只负责执行。
+        self.create_subscription(
+            TrafficDirective, f"/{self.ns}/traffic", self.on_traffic, state_qos(10))
 
         self.cli_task = self.create_client(RequestTask, "/scheduler/request_task")
         self.cli_acquire = self.create_client(AcquireLease, "/traffic/acquire")
@@ -175,6 +213,10 @@ class RobotController(Node):
         self.create_timer(0.2, self.publish_status)
         self.create_timer(0.2, self.broadcast_tf)
         self.create_timer(0.5, self.publish_path)
+        if bool(self.get_parameter("debug_avoid").value):
+            self.create_timer(10.0, self._dump_avoid)
+        if self._dbg_dir:
+            self.create_timer(20.0, self._dump_scan_frames)
         self.get_logger().info(
             f"{self.ns} up at ({self.x:.1f},{self.y:.1f}) "
             f"[{'internal kinematics' if self.self_kin else 'gazebo odom'}]"
@@ -187,20 +229,32 @@ class RobotController(Node):
         self.yaw = yaw_from_quat(m.pose.pose.orientation) + self.yaw0
 
     def _self_range(self, ang: float) -> float:
-        """从雷达到**车体轮廓**在给定方向上的距离（车体系，前方为 +x）。
+        """从雷达到**整车轮廓**在给定方向上的距离（车体系，前方为 +x）。
 
-        为什么要算这个：LiDAR 装在车头 (x=+0.18)，而车体是 0.56×0.44 的矩形，
-        所以它的两条前角在 ±66°、约 0.24 m 处 —— 正好落在前向安全扇区里。
-        实测中这一对**对称的自身回波**让车永久停在原地（v=0 → 看门狗判卡死 →
-        放弃任务 → 全线停摆）。真实 AGV 的做法是按轮廓逐角度屏蔽自身回波，
-        而不是拍一个常数距离：常数要么漏（屏蔽不掉车尾）、要么瞎（把真障碍也屏蔽了）。
+        为什么要算这个：LiDAR 装在车头 (x=+0.18)，而车体本身就在它的视场里。
+        实测中这些**自身回波**让车永久停在原地（v=0 → 看门狗判卡死 → 放弃任务
+        → 全线停摆）。真实 AGV 的做法是按轮廓逐角度屏蔽自身回波，而不是拍一个
+        常数距离：常数要么漏（屏蔽不掉车尾）、要么瞎（把真障碍也屏蔽了）。
+
+        轮廓必须包含**凸出车体矩形之外的部件**，否则它们会被当成真障碍：
+        轮子是 0.075 半径、装在 y=±0.21 的圆柱，外缘到 y=±0.285 —— 比车体
+        半宽 0.22 还外凸 0.065 m。从雷达 (0.18,0) 看过去，两侧轮子在
+        **0.283 m / ±56°** 处；只按矩形算出的遮挡距离是 0.112 m，那一对回波
+        就会被误判成"车头前 0.28 m 有障碍物"。
+
+        实测结论（别再来回试）：**单台车静止在空地上，全周最小回波 0.92 m，
+        也就是自身轮廓根本不在视场内** —— 雷达装在车头足够靠前。所以正常的
+        直行并不会被自身回波挡住；这一层是给"贴住同伴/机台时车体扭转、
+        轮子扫进视场"这类边缘情形兜底的。真正的历史故障是规划器与物理世界
+        不一致（见 tools/build_world.py 与 layout.static_boxes 的差集），
+        不要把这里的掩膜当成主因去调。
         """
-        # 车体矩形（车体系）与雷达安装点
-        hx, hy = self.hull_len / 2.0, self.hull_wid / 2.0
         lx = self.lidar_dx
         dx, dy = math.cos(ang), math.sin(ang)
         best = float("inf")
-        # 与四条边求交，取最近的正向交点
+
+        # 1) 车体矩形：与四条边求交，取最近的正向交点
+        hx, hy = self.hull_len / 2.0, self.hull_wid / 2.0
         for wall_x in (-hx, hx):
             if abs(dx) > 1e-9:
                 t = (wall_x - lx) / dx
@@ -213,6 +267,20 @@ class RobotController(Node):
                 x = lx + dx * t
                 if t > 0 and -hx - 1e-9 <= x <= hx + 1e-9:
                     best = min(best, t)
+
+        # 2) 凸出部件（两侧轮子 / 后面万向轮）：按圆处理，取正向交点
+        for cx, cy, r in self.self_circles:
+            ox, oy = lx - cx, 0.0 - cy        # 从圆心指向雷达
+            b = ox * dx + oy * dy
+            c = ox * ox + oy * oy - r * r
+            disc = b * b - c
+            if disc < 0.0:
+                continue
+            sq = math.sqrt(disc)
+            for t in (b - sq, b + sq):
+                if t > 0:
+                    best = min(best, t)
+                    break
         return 0.0 if best == float("inf") else best
 
     def on_scan(self, m: LaserScan):
@@ -231,22 +299,98 @@ class RobotController(Node):
         if not m.ranges:
             return
         n = len(m.ranges)
-        half = max(1, int(n * 0.11))                      # 约 ±40°
-        lo, hi = n // 2 - half, n // 2 + half
         margin = float(self.get_parameter("scan_self_mask_m").value)
         rmin = float(m.range_min)
-        front = []
-        for i in range(lo, hi):
-            r = m.ranges[i]
-            if not (rmin < r < m.range_max):
-                continue
-            ang = m.angle_min + i * m.angle_increment
-            if r > self._self_range(ang) + margin:        # 自身轮廓以外的才算障碍
-                front.append(r)
-        self._scan_min = min(front) if front else 99.0
+
+        def sector_min(lo, hi):
+            """扇区内**自身轮廓以外**的最小距离；没有有效回波返回 99。"""
+            best = 99.0
+            for i in range(lo, hi):
+                r = m.ranges[i]
+                if not (rmin < r < m.range_max):
+                    continue
+                ang = m.angle_min + i * m.angle_increment
+                if r > self._self_range(ang) + margin:    # 自身轮廓以外的才算障碍
+                    best = min(best, r)
+            return best
+
+        # 三等分：左 / 前 / 右。用于"前方受阻时朝空的一侧转出去"。
+        # ROS 1 的 check_laser_obstacle 就是这么分的，这里保持同一套判据。
+        third = max(1, n // 3)
+        self._scan_left = sector_min(0, third)
+        self._scan_front = sector_min(third, 2 * third)
+        self._scan_right = sector_min(2 * third, n)
+        # 急停只看 ±40°：侧后方的近距离物体不该让一台直行的车停下。
+        half = max(1, int(n * 0.11))
+        self._scan_min = sector_min(n // 2 - half, n // 2 + half)
+        # 排障：把"前方有近障碍"的那一帧各角度回波落盘，用于反推到底是什么挡住
+        if self._dbg_dir and self._scan_min < 0.55 and len(self._dbg_frames) < 40:
+            self._dbg_frames.append(dict(
+                t=time.time(), x=self.x, y=self.y, yaw=self.yaw, state=self.state,
+                scan_min=self._scan_min, front=self._scan_front,
+                left=self._scan_left, right=self._scan_right,
+                ranges=[round(r, 3) if math.isfinite(r) else None for r in m.ranges],
+                angle_min=m.angle_min, angle_inc=m.angle_increment))
 
     def on_peer(self, m: RobotStatus):
         self.peers[m.robot_id] = m
+
+    def on_traffic(self, m: TrafficDirective):
+        self._traffic = m
+        self._traffic_t = time.time()
+
+    # ---------- 交通指令执行 ----------
+    def _apply_traffic(self, v: float, w: float, now: float):
+        """把协调层的约束落到 (v, w) 上。协调层决定"让不让"，这里只管执行。
+
+        指令带时间戳：协调层若挂了或丢包，超过 1 秒就按"无指令"处理。
+        否则一台车会被最后一帧 hold 永久压住 —— 那是比死锁更难查的故障。
+        """
+        d = self._traffic
+        if d is None or now - self._traffic_t > 1.0:
+            if self._yield_active:
+                self._yield_active = False
+                self._restore_task_path()
+            return v, w
+
+        # --- 让路路径覆盖 ---
+        if d.has_yield_path and len(d.yield_x) >= 2:
+            if not self._yield_active:
+                self.pursuit.set_path(list(zip(d.yield_x, d.yield_y)))
+                self._yield_active = True
+                self.get_logger().info(
+                    f"{self.ns}: yield path ({len(d.yield_x)} pts) reason={d.reason}")
+        elif self._yield_active:
+            # 让路窗口结束 → 切回自己的任务路径
+            self._yield_active = False
+            self._restore_task_path()
+            self.get_logger().info(f"{self.ns}: yield done, resuming task path")
+
+        # --- 重规划请求 ---
+        if d.replan and now - self._traffic_replan_t > 1.5:
+            self._traffic_replan_t = now
+            tx, ty = self._target_xy()
+            if tx is not None:
+                self.replans += 1
+                self._go_to(tx, ty, self.state, reset_strikes=False)
+
+        # --- 直接速度覆盖（紧急脱困，方向安全性已由协调层判定）---
+        if d.has_escape:
+            return float(d.escape_v), float(d.escape_w)
+
+        if d.hold:
+            self.yields += 1
+            return 0.0, 0.0
+
+        if d.speed_scale < 1.0:
+            v *= max(0.0, float(d.speed_scale))
+        return v, w
+
+    def _restore_task_path(self):
+        """让路结束后回到自己的任务路径。"""
+        tx, ty = self._target_xy()
+        if tx is not None:
+            self._go_to(tx, ty, self.state, reset_strikes=False)
 
     def publish_status(self):
         s = RobotStatus()
@@ -258,6 +402,13 @@ class RobotController(Node):
         s.distance_done = float(self.seen_len)
         s.battery = float(self.battery)
         s.odom_total = float(self.total_len) + float(self.seen_len)
+        # 交通协调层要用的三项：没有它们，协调层就无法判断"是不是真的停着"
+        # （反饥饿增益）、也拿不到当前阶段目标（冲突裁决与卡死自愈）。
+        s.speed = float(getattr(self, "_v_cmd", 0.0))
+        tx, ty = self._target_xy()
+        s.has_target = tx is not None
+        s.target_x = float(tx) if tx is not None else 0.0
+        s.target_y = float(ty) if ty is not None else 0.0
         self.pub_status.publish(s)
 
     def publish_path(self):
@@ -327,6 +478,12 @@ class RobotController(Node):
 
     # ---------- 决策 ----------
     def _decide(self):
+        # 起步错峰：8 台车挤在 1.35 m 间距的待命排里，同时起步会立刻互锁
+        # （实测 2 台车 3.0 单/分钟、4 台 6.0 单/分钟线性增长，到 8 台塌到 0~1）。
+        # 真实车队出库也要按序放行，所以用发车间隔而不是"把车摆开"——
+        # 后者会让世界上没有一台车停在该停的地方。
+        if time.time() < self.start_at:
+            return
         if self.battery < float(self.get_parameter("battery_low_pct").value):
             self._start_charging()
             return
@@ -500,7 +657,8 @@ class RobotController(Node):
         # 重规划：只在**路径真的被占住**时才重算。
         # 曾经是每 3 秒无条件重算一次，结果是纯追踪的路径被反复重置：
         # 车刚开始转向就被打断，于是永远在原地来回摆，一步也走不出去。
-        if (now - getattr(self, "_last_replan_t", 0.0) > 1.0
+        if (not self._yield_active
+                and now - getattr(self, "_last_replan_t", 0.0) > 1.0
                 and self._path_blocked_by_peer()):
             self._last_replan_t = now
             tx, ty = self._target_xy()
@@ -508,8 +666,12 @@ class RobotController(Node):
                 self._go_to(tx, ty, self.state, reset_strikes=False)
 
         v, w = self._avoid(v, w, now)
+        # 交通指令放在局部避障之后：协调层是全局视角，它的 hold / 脱困
+        # 必须能覆盖单车自己的局部判断，否则两台车会同时"礼貌地"往中间挤。
+        v, w = self._apply_traffic(v, w, now)
         self._watchdog(now)
         self._v_last = v
+        self._v_cmd = v
         cmd = Twist()
         cmd.linear.x, cmd.angular.z = float(v), float(w)
         self.pub_cmd.publish(cmd)
@@ -559,6 +721,10 @@ class RobotController(Node):
                 and self.pursuit.remaining() < 1.20)
 
     def _arrived(self) -> bool:
+        # 让路途中走完的是"让路路径"，不是任务目标点。
+        # 不挡这一下，车会在让路结束时误判到达、直接开始装卸。
+        if self._yield_active:
+            return False
         if self.pursuit.finished:
             return True
         tx, ty = self._target_xy()
@@ -566,10 +732,64 @@ class RobotController(Node):
             return False
         return math.hypot(tx - self.x, ty - self.y) < 0.20
 
+    def _front_peer(self, dist: float = 0.60, half_angle: float = 0.9):
+        """正前方锥形内最近的同伴（没有则 None）。
+
+        LiDAR 只告诉我们"前方有东西、多远、左右哪边空"，分不出那是机台还是
+        同伴。而"往哪边退"这件事两者答案相反：机台要挑空的一侧，
+        同伴要挑**远离它**的一侧。所以这里用车队状态补上这个区分。
+        """
+        best, bd = None, dist
+        for rid, p in self.peers.items():
+            if rid == self.rid:
+                continue
+            dx, dy = p.x - self.x, p.y - self.y
+            d = math.hypot(dx, dy)
+            if d > bd:
+                continue
+            bearing = math.atan2(dy, dx) - self.yaw
+            if abs(math.atan2(math.sin(bearing), math.cos(bearing))) > half_angle:
+                continue
+            best, bd = p, d
+        return best
+
+    def _abump(self, why: str):
+        """统计 _avoid 里到底哪一条在限速 —— 排障用，不开日志就没有开销。"""
+        self._avoid_hist[why] = self._avoid_hist.get(why, 0) + 1
+
+    def _dump_scan_frames(self):
+        """把收集到的"前方近障碍"原始帧写成 JSON，供离线反推。"""
+        if not self._dbg_frames:
+            return
+        import json
+        import os
+        os.makedirs(self._dbg_dir, exist_ok=True)
+        p = os.path.join(self._dbg_dir, f"scanfram_{self.ns}.json")
+        try:
+            with open(p, "w") as f:
+                json.dump(dict(robot=self.rid, frames=self._dbg_frames), f)
+        except OSError as exc:
+            self.get_logger().warn(f"{self.ns}: cannot write scan frames: {exc}")
+
+    def _dump_avoid(self):
+        """把本车 _avoid 分支计数打成一行，便于对比"到底谁在压速度"。"""
+        h = self._avoid_hist
+        if not h:
+            return
+        n = max(1, h.get("called", 1))
+        top = ", ".join(f"{k}={v}({v/n*100:.0f}%)"
+                        for k, v in sorted(h.items(), key=lambda kv: -kv[1]) if k != "called")
+        tx, ty = self._target_xy()
+        self.get_logger().info(
+            f"AVOID {self.ns} state={self.state} pos=({self.x:.2f},{self.y:.2f}) "
+            f"tgt={'-' if tx is None else f'({tx:.2f},{ty:.2f})'} "
+            f"scan={self._scan_min:.2f} called={n} :: {top}")
+
     def _avoid(self, v: float, w: float, now: float = 0.0):
         """车车互让 + LiDAR 安全层。"""
         slow = float(self.get_parameter("avoid_slow_m").value)
         stop = float(self.get_parameter("avoid_stop_m").value)
+        self._abump("called")
         # 1) LiDAR：前向有东西就停。
         #    靠泊例外：进入目标点附近后，急停阈值必须放宽到小于到达判定，
         #    否则"急停 0.38m > 到达 0.20m"会形成一个永远进不去的死区 ——
@@ -583,6 +803,33 @@ class RobotController(Node):
             v = min(v, 0.16)
         if self._scan_min < scan_stop and v > 0.0:
             self.yields += 1
+            # 只停不转是不够的：车头顶住机台之后，纯追踪只会一直让它往前走，
+            # 于是"停住 → 看门狗重规划 → 路径还是那一条 → 继续停住"，
+            # 变成永久卡死（实测 8 台车里 3 台就这么废掉）。
+            # ROS 1 的 check_laser_obstacle 在同样情形下是**低速倒车 + 转向
+            # 较空的一侧**，这里按同一套判据补上；靠泊/爬行阶段除外，
+            # 否则永远进不了工位。
+            if (not self._docking()) and now >= getattr(self, "_creep_until", 0.0):
+                # 前方到底是机台还是同伴，决定往哪退：
+                #   机台 -> 转向左右较空的一侧；
+                #   同伴 -> 转向**远离它**的一侧。
+                # 原来一律"哪边空往哪转"，当同伴在正前方时左右对称，
+                # 判据退化成永远选同一侧，车就贴住对方原地打转（实测 R6/R7
+                # 在待命区并排卡死 60 s，实走里程 0）。
+                turn = 1.0 if self._scan_left > self._scan_right else -1.0
+                blocker = self._front_peer()
+                if blocker is not None:
+                    bearing = math.atan2(blocker.y - self.y, blocker.x - self.x)
+                    rel = math.atan2(math.sin(bearing - self.yaw), math.cos(bearing - self.yaw))
+                    turn = -1.0 if rel > 0.0 else 1.0     # 反着对方转
+                    self._abump("lidar_backup_peer")
+                elif self._scan_front < 0.5:
+                    self._abump("lidar_backup_static")
+                else:
+                    self._abump("lidar_stop")
+                    return 0.0, w * 0.3
+                return -0.10, turn
+            self._abump("lidar_stop")
             return 0.0, w * 0.3
         # 2) 硬安全距离：用**有向矩形**判据，而不是圆盘。
         #    只用"车心距"既不对又难调：0.34 m 会真的撞上（车长 0.56 m），
@@ -603,22 +850,52 @@ class RobotController(Node):
             else:
                 hard = False
             if hard or d < 1e-6:
-                # 双方都停会死锁，所以用确定性优先级放一台走 —— 但**只放它"往外走"**。
-                # 早前的写法是"id 小的一律以 0.12 m/s 挪"，结果当它的路径正好朝向
-                # 对方时，就是主动往车里开：实测出现 1900 次重叠，最小车心距 0.259 m。
+                # 轮廓已经相交。这里必须给**被挡住的那台**一条出路，否则两台车
+                # 会互相僵住。原来只有"id 小的一律沿自身朝向挪"这一条，
+                # 而并排待命时两台车朝向相同 —— 车体系里的"远离对方"垂直于
+                # 前进方向，余弦约等于 0，于是永远不满足 >0.25，直接 return 0。
+                # 实测后果：sat_stop 占 R4 全部 _avoid 调用的 74%，车纹丝不动。
+                # 现在改成：优先沿路径走，其次侧向让开，最后才原地等。
                 self.yields += 1
                 if rid > self.rid:
-                    return 0.0, 0.0                     # 让行车完全停住
+                    self._abump("sat_yield_stop")
+                    return 0.0, 0.0                     # 让行车完全停住（等对方腾位）
                 ax, ay = self.x - p.x, self.y - p.y     # 从对方指向我
                 away = math.hypot(ax, ay)
                 if away < 1e-6:
+                    self._abump("sat_coincident")
                     return 0.0, 0.0
-                # 只有当前进方向确实在"远离对方"时才允许低速脱离
-                if (math.cos(self.yaw) * ax + math.sin(self.yaw) * ay) / away > 0.25:
-                    return min(v, 0.12), w
+                # 沿自身朝向、以及左右侧向，挑一个真正能拉开距离的
+                for name, vv, ww in (("fwd", min(v, 0.12), w),
+                                     ("fwd_r", 0.10, -0.9),
+                                     ("fwd_l", 0.10, 0.9),
+                                     ("back", -0.10, 0.0)):
+                    nx = self.x + vv * math.cos(self.yaw) * 0.5
+                    ny = self.y + vv * math.sin(self.yaw) * 0.5
+                    if math.hypot(nx - p.x, ny - p.y) > away + 1e-3:
+                        self._abump(f"sat_escape_{name}")
+                        return vv, ww
+                self._abump("sat_stop")
                 return 0.0, 0.0
 
         # 3) 前方锥形内的互让：只看会挡我路的那台
+        #    这一层是"车队互让"的本地近似。协调层（traffic.py）已经用
+        #    冲突分类 + 优先级 + 走廊令牌 + 让路路径做了同一件事，两套叠在一起
+        #    就是双重限速：实测指令速度中位数被压到 0.15 m/s（上限 0.85），
+        #    34.9% 的指令落在 ≤0.30 m/s。所以默认关掉，由协调层统一裁决；
+        #    保留参数是为了能把它打开做对照实验。
+        #    注意：关掉的只是"减速礼貌"，真正的防撞仍由第 2 步的有向矩形硬
+        #    判据兜底，不会漏碰撞。
+        if not self.avoid_cones:
+            if v > 0.05:
+                if self._scan_left < 0.30:
+                    w = min(w, -0.35)
+                    self._abump("graze_left")
+                elif self._scan_right < 0.30:
+                    w = max(w, 0.35)
+                    self._abump("graze_right")
+            self._abump("clear")
+            return v, w
         for rid, p in self.peers.items():
             if rid == self.rid:
                 continue
@@ -633,13 +910,27 @@ class RobotController(Node):
             if rid < self.rid:                          # 确定性优先级：id 小的先行通过
                 if d < stop:
                     v = min(v, 0.14)                    # 低速挤过去，而不是无视对方
+                    self._abump("cone_front_squeeze")
                 else:
                     v = min(v, 0.40)
+                    self._abump("cone_front_slow")
             else:
                 if d < stop * 0.8:
                     self.yields += 1
+                    self._abump("cone_back_stop")
                     return 0.0, 0.0                     # 让行车完全停住
                 v = min(v, 0.50)
+                self._abump("cone_back_slow")
+        # 4) 侧擦修正：一侧贴得太近就往另一侧修一点，避免一路蹭着机台走。
+        #    这也是 ROS 1 check_laser_obstacle 里 left/right < 0.3 那两条。
+        if v > 0.05:
+            if self._scan_left < 0.30:
+                w = min(w, -0.35)
+                self._abump("graze_left")
+            elif self._scan_right < 0.30:
+                w = max(w, 0.35)
+                self._abump("graze_right")
+        self._abump("clear")
         return v, w
 
     def _watchdog(self, now):

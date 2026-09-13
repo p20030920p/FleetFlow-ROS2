@@ -67,6 +67,10 @@ def _robots(context, *args, **kwargs):
                 parameters=[dict(robot_id=i, start_x=x, start_y=y,
                                   battery_drain_per_m=float(LaunchConfiguration("battery_drain").perform(context)),
                                   stuck_timeout_s=float(LaunchConfiguration("stuck_timeout").perform(context)),
+                                  debug_avoid=LaunchConfiguration("debug_avoid").perform(context).lower() == "true",
+                                  debug_scan_dir=LaunchConfiguration("debug_scan_dir").perform(context),
+                                  start_stagger_s=float(LaunchConfiguration("start_stagger").perform(context)),
+                                  avoid_cones=LaunchConfiguration("avoid_cones").perform(context).lower() == "true",
                                  use_sim_time=use_sim_time)],
             )
         )
@@ -101,26 +105,36 @@ def generate_launch_description():
                             condition=IfCondition(gui_on))
 
     # ---- 话题桥接 ----
+    # **方向必须显式写出来**，这是本项目最贵的一个坑：
+    #   `A@B@C` = 双向    `A@B]C` = ROS->GZ    `A@B[C` = GZ->ROS
+    # 一开始全部写成 `@..@..@`，于是 cmd_vel 变成双向：控制器发到 ROS 的指令被
+    # 桥送进 GZ，同一座桥的 GZ->ROS 方向又把 GZ 上的这条指令发回 ROS，
+    # 而它立刻又被 ROS->GZ 方向送回 GZ —— 一个**自激回路**，指令条数每一步翻倍。
+    # 症状极具迷惑性：轮子转速是对的（odom 里 twist 就是 0.6），但车几乎不前进、
+    # 里程计位姿在出生点附近乱跳，还伴随 "A message was lost"。
+    # 上游话题一律单向；只有 /clock 也只需要 GZ->ROS。
     # 相机的桥接是可选的：ros_gz_bridge 桥接 Image 时若订阅端跟不上，图像缓冲会
     # 持续增长（实测涨到 ~5GB 触发 OOM killer）。所以默认只桥接非图像话题；
     # 需要截图时显式打开 bridge_cameras:=true，且建议一次只开一路
     # （见 tools/capture_views.py 与 assets/readme 的生成步骤）。
     def _bridge(context, *args, **kwargs):
-        topics = ["/clock@rosgraph_msgs/msg/Clock@gz.msgs.Clock"]
+        topics = ["/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock"]
         if LaunchConfiguration("bridge_cameras").perform(context).lower() == "true":
             topics += [
-                "/view_top/image@sensor_msgs/msg/Image@gz.msgs.Image",
-                "/view_iso/image@sensor_msgs/msg/Image@gz.msgs.Image",
-                "/view_line/image@sensor_msgs/msg/Image@gz.msgs.Image",
+                "/view_top/image@sensor_msgs/msg/Image[gz.msgs.Image",
+                "/view_iso/image@sensor_msgs/msg/Image[gz.msgs.Image",
+                "/view_line/image@sensor_msgs/msg/Image[gz.msgs.Image",
             ]
         n = 6  # 固定桥接上限，多余的车不会报错（桥接未出现的话题会等待）
         for i in range(n):
             topics += [
-                f"/robot_{i}/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist",
-                f"/robot_{i}/odom@nav_msgs/msg/Odometry@gz.msgs.Odometry",
-                f"/robot_{i}/scan@sensor_msgs/msg/LaserScan@gz.msgs.LaserScan",
-                f"/robot_{i}/tf@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V",
-                f"/robot_{i}/joint_states@sensor_msgs/msg/JointState@gz.msgs.Model",
+                # 下行：唯一的指令通道
+                f"/robot_{i}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist",
+                # 上行：状态与传感
+                f"/robot_{i}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry",
+                f"/robot_{i}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan",
+                f"/robot_{i}/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V",
+                f"/robot_{i}/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model",
             ]
         return [Node(package="ros_gz_bridge", executable="parameter_bridge",
                      name="ros_gz_bridge", output="screen", arguments=topics)]
@@ -141,7 +155,8 @@ def generate_launch_description():
                               max_tasks_in_flight=LaunchConfiguration("max_tasks_in_flight"),
                               use_sim_time=use_sim_time)]),
         Node(package=PKG, executable="traffic_manager", name="traffic_manager", output="screen",
-             parameters=[dict(use_sim_time=use_sim_time)]),
+             parameters=[dict(use_sim_time=use_sim_time,
+                              num_robots=LaunchConfiguration("num_robots"))]),
         Node(package=PKG, executable="task_scheduler", name="task_scheduler", output="screen",
              parameters=[dict(policy=LaunchConfiguration("policy"),
                               seed=LaunchConfiguration("seed"),
@@ -179,6 +194,14 @@ def generate_launch_description():
         DeclareLaunchArgument("seed", default_value="7"),
         DeclareLaunchArgument("bridge_cameras", default_value="false",
                               description="桥接 /view_*/image（截图用，注意桥接端内存）"),
+        DeclareLaunchArgument("avoid_cones", default_value="false",
+                              description="开启控制器本地前方锥形互让（默认关，交给协调层）"),
+        DeclareLaunchArgument("start_stagger", default_value="0.0",
+                              description="出库错峰：第 i 台车等 i*该值秒再领任务"),
+        DeclareLaunchArgument("debug_avoid", default_value="false",
+                              description="打印每车 _avoid 分支计数（排障用，会刷屏）"),
+        DeclareLaunchArgument("debug_scan_dir", default_value="",
+                              description="把前方近障碍的原始 scan 帧写到此目录（排障用）"),
         DeclareLaunchArgument("run_label", default_value="gazebo"),
         DeclareLaunchArgument("metrics_dir", default_value="/tmp/fleetflow_metrics"),
         gz_headless, gz_gui, web_node, OpaqueFunction(function=_bridge),
