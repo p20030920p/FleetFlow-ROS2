@@ -46,7 +46,7 @@ ros2 launch fleetflow_sim factory.launch.py gui:=true        # with the Gazebo G
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # no Gazebo
 
 # Gazebo GUI and the floor plan live in a browser, side by side
-ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=2
+ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=4
 # open http://127.0.0.1:8080 — the board streams on /stream and /map/stream (MJPEG)
 ```
 
@@ -148,16 +148,22 @@ dominates every other term and the auction degenerates to FIFO.
 > 24 units and the same 260 s window, more robots do *less* work — each overlap slows two
 > robots at once, and overlaps scale with density:
 
-| AGVs | delivered / 260 s | escape cmds | collisions | stall recoveries |
-|---:|---:|---:|---:|---:|
-| 8 | ~8 | 17 | 9 | 60+ |
-| 4 | 8 | **81** | 2 | **86** |
-| **2** | **13** | **0** | **0** | **7** |
+| AGVs | run A | run B | note |
+|---:|---:|---:|---|
+| 8 | 7 | 8 | 17 escapes, 9 collisions |
+| 4 | 8 | 10 | 81 escapes, 86 stall recoveries |
+| 2 | **13** (esc 0, coll 0) | **0** (esc 87, stall 87) | same command, opposite result |
 
-> Two robots reach the plant ceiling because the bottleneck is the task pipeline, not the
-> fleet. Demo and experiments therefore run at `num_robots:=2`; the plant is 26 × 16 m with
-> single-berth stations, so eight vehicles contend rather than produce. Full evidence,
-> including what did *not* work: [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
+> **Smaller fleets are no better in Gazebo, and none of them is reliable yet.** Two robots
+> produced 13 deliveries with zero avoidance events in one run and zero deliveries with 87
+> in the next, from the identical command. Adding robots measurably adds contention (8 → 4
+> takes escapes from 17 to 81), but reducing them does not buy reproducibility, so this is
+> not a fleet-size fix. The bottleneck is a positive feedback in the avoidance layer that
+> the findings document traces to the three hard-safety exits in `_avoid`.
+>
+> **Until that is fixed, treat Gazebo figures on this page as unstable**, and prefer
+> `logic_only.launch.py` for anything quantitative — same coordination stack, wall-clock
+> accurate. Evidence and the failed attempts: [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
 
 ![Live dashboard, two AGVs working](assets/readme/live-board-2agv.png)
 

@@ -46,7 +46,7 @@ ros2 launch fleetflow_sim factory.launch.py gui:=true        # 带 Gazebo 界面
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # 不启 Gazebo
 
 # Gazebo 界面 + 浏览器里的实时平面图，并排对照
-ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=2
+ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=4
 # 打开 http://127.0.0.1:8080 —— 画面走 /stream 与 /map/stream（MJPEG 流）
 ```
 
@@ -141,16 +141,21 @@ J = α‖p_r − s_t‖ + β‖s_t − g_t‖ + γ(n_src + 1.5 n_dst)
 > **车队规模是设计参数，不是目标。** 在 Gazebo 里用同样的 24 件物料、同样的 260 秒窗口实测：
 > 车越多产出反而越少 —— 每次轮廓相交会让两台车同时慢下来，而相交次数随密度上升：
 
-| 车队 | 260 秒完成 | 脱困指令 | 碰撞事件 | 卡死自愈 |
-|---:|---:|---:|---:|---:|
-| 8 台 | ~8 | 17 | 9 | 60+ |
-| 4 台 | 8 | **81** | 2 | **86** |
-| **2 台** | **13** | **0** | **0** | **7** |
+| 车队 | 第 1 次 | 第 2 次 | 备注 |
+|---:|---:|---:|---|
+| 8 台 | 7 单 | 8 单 | 脱困 17、碰撞 9 |
+| 4 台 | 8 单 | 10 单 | 脱困 81、卡死自愈 86 |
+| 2 台 | **13 单**（脱困 0、碰撞 0） | **0 单**（脱困 87、自愈 87） | 同一条命令，结果相反 |
 
-> 2 台车就能达到本厂产能上限，因为瓶颈是**任务管道**而不是车队。
-> 因此演示与实验统一用 `num_robots:=2`；厂房 26 × 16 m、每个工位只有一个泊位，
-> 8 台车只会互相争抢而不是增产。完整证据（含**没有**奏效的尝试）：
-> [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md)。
+> **在 Gazebo 里车队变小并不会变好，而且目前没有任何规模是可靠的。**
+> 2 台车一次跑出 13 单、零避让事件，紧接着同一条命令跑出 0 单、87 次脱困。
+> 加车确实会加剧争抢（8 台→4 台，脱困从 17 涨到 81），但减车换不来可复现性，
+> 所以这**不是**车队规模的问题，而是避让层里一个正反馈 ——
+> 排查文档把它定位到 `_avoid` 的三个硬安全出口。
+>
+> **在这一条修好之前，本页的 Gazebo 数字都应按"不稳定"看待**；
+> 任何定量结论请改用 `logic_only.launch.py`（协同栈相同、墙钟准确）。
+> 完整证据与失败的尝试：[docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md)。
 
 ![两台车运行中的实时看板](assets/readme/live-board-2agv.png)
 
