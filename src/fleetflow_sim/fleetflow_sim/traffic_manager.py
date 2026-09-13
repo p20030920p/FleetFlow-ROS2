@@ -55,6 +55,8 @@ class TrafficManager(Node):
         #   centre        = 旧的车心距判据（1.5 m 起减速），存档对照用
         # 留着它是为了能回答"改成轮廓判据到底有没有用"，而不是只能靠记忆对比。
         self.declare_parameter("collision_criterion", "outline")
+        # 脱困策略开关，同样只为对照实验保留：legacy = 旧行为（原地转）
+        self.declare_parameter("escape_strategy", "gap")
 
         self.ttl = float(self.get_parameter("lease_ttl_s").value)
         self.leases: dict[str, Lease] = {}
@@ -72,6 +74,8 @@ class TrafficManager(Node):
         self.layer = TrafficLayer(n, logger=self.get_logger())
         crit = str(self.get_parameter("collision_criterion").value)
         self.layer.centre_criterion = (crit == "centre")
+        self.layer.escape_legacy = (str(self.get_parameter("escape_strategy").value)
+                                    == "legacy")
         self.peers: dict[int, RobotStatus] = {}
         self.last_seen: dict[int, float] = {}
 

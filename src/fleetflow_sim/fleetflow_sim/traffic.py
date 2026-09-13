@@ -135,21 +135,27 @@ def _project(poly, nx, ny):
     return min(vals), max(vals)
 
 
-def obb_overlap(A, B) -> bool:
-    """分离轴定理：两个有向矩形是否相交（与控制器用的是同一套判据）。"""
+def _sat_axes(A, B):
+    """A、B 两个矩形的全部候选分离轴（每条边的法线，已单位化）。"""
+    axes = []
     for poly in (A, B):
         for i in range(4):
             x1, y1 = poly[i]
             x2, y2 = poly[(i + 1) % 4]
             nx, ny = -(y2 - y1), (x2 - x1)
             n = math.hypot(nx, ny)
-            if n < 1e-9:
-                continue
-            nx, ny = nx / n, ny / n
-            a0, a1 = _project(A, nx, ny)
-            b0, b1 = _project(B, nx, ny)
-            if a1 < b0 or b1 < a0:
-                return False
+            if n >= 1e-9:
+                axes.append((nx / n, ny / n))
+    return axes
+
+
+def obb_overlap(A, B) -> bool:
+    """分离轴定理：两个有向矩形是否相交（与控制器用的是同一套判据）。"""
+    for nx, ny in _sat_axes(A, B):
+        a0, a1 = _project(A, nx, ny)
+        b0, b1 = _project(B, nx, ny)
+        if a1 < b0 or b1 < a0:
+            return False
     return True
 
 
@@ -163,28 +169,40 @@ def _point_seg_dist(p, q1, q2) -> float:
 
 
 def obb_gap(A, B) -> float:
-    """两个有向矩形的净距（米）：相交返回负值（互相嵌入的深度近似）。
+    """两个有向矩形的**净距**（米）：分离为正，相交为负（负值即穿透深度）。
 
-    两个凸多边形分离时，最小距离一定取在"某个顶点到另一多边形某条边"上，
-    所以枚举 8 个顶点 × 2 个多边形就够，不必上 GJK。
+    相交时必须返回**真实的穿透深度**，不能只返回一个"负号"。
+    这一点踩过坑：早期实现相交分支用"顶点到对边的最近距离"近似，对两个矩形
+    相互嵌入的情形，最近距离恒为 0 —— 于是 0.06 m 的浅重叠和 0.30 m 的深重叠
+    都返回 -0.0000。后果是 `build_emergency_escape_command` 无法比较"往哪个
+    方向退更能拉开距离"，所有候选看起来一样好，脱困退化成原地转，两台车
+    永远分不开（实测 zone/种子2 t=8.1s，R2 与 R3 就此卡死）。
+    分离轴上的最小重叠量才是正确的穿透深度。
     """
-    if obb_overlap(A, B):
-        # 已相交：用"顶点到对边的最小距离"近似嵌入深度，仅用于分级，精确值不重要
-        best = float("inf")
-        for P, Q in ((A, B), (B, A)):
-            for p in P:
+    axes = _sat_axes(A, B)
+    if axes:
+        min_overlap = float("inf")
+        separated = False
+        for nx, ny in axes:
+            a0, a1 = _project(A, nx, ny)
+            b0, b1 = _project(B, nx, ny)
+            o = min(a1, b1) - max(a0, b0)
+            if o <= 0.0:
+                separated = True
+                break
+            min_overlap = min(min_overlap, o)
+        if separated:
+            # 分离：最小距离一定取在"某顶点到另一矩形某条边"上
+            best = float("inf")
+            for p in A:
                 for k in range(4):
-                    best = min(best, _point_seg_dist(p, Q[k], Q[(k + 1) % 4]))
-        return -best
-
-    best = float("inf")
-    for p in A:
-        for k in range(4):
-            best = min(best, _point_seg_dist(p, B[k], B[(k + 1) % 4]))
-    for p in B:
-        for k in range(4):
-            best = min(best, _point_seg_dist(p, A[k], A[(k + 1) % 4]))
-    return best
+                    best = min(best, _point_seg_dist(p, B[k], B[(k + 1) % 4]))
+            for p in B:
+                for k in range(4):
+                    best = min(best, _point_seg_dist(p, A[k], A[(k + 1) % 4]))
+            return best
+        return -min_overlap
+    return float("inf")
 
 
 @dataclass
@@ -214,6 +232,10 @@ class TrafficLayer:
         # 对照实验开关：True 时 collision_tier 退回旧的车心距判据。
         # 只由 traffic_manager 的 collision_criterion 参数设置。
         self.centre_criterion = False
+        # 脱困策略开关（对照实验用）：
+        #   True  = 旧行为"排除所有朝对方的线速度，剩不下就原地转"
+        #   False = 新行为"选一个让净距最大的动作"（见 build_emergency_escape_command）
+        self.escape_legacy = False
         self.reset()
 
     # ================================================================
@@ -813,19 +835,64 @@ class TrafficLayer:
         return -1.0 if pressure > 0.05 else 1.0
 
     def build_emergency_escape_command(self, rid, closest):
-        """方向安全的脱困速度：不选任何"朝对方开"的线速度，都不行就原地转。"""
-        if closest is None:
+        """脱困速度：**保证一定给出一个"把两车拉开"的动作**，实在拉不开才原地转。
+
+        旧实现是"先把'朝对方开'的方向全排除掉，剩不下就原地转"。当两台车已经
+        压在一起时这个判据自相矛盾：任何方向上的移动都会让**某一点**更靠近对方，
+        于是候选全被排除，只能原地转 —— 而原地转不会改变净距，下一帧继续被判定
+        为重叠，永远转下去。
+        实测现场（`zone` 种子 2，t=8.1s）：R2 与 R3 车心距 0.92 m、指令
+        `emergency_from_R3`、`esc=1`，而 v 恒为 0.000，两台车就此卡死。
+
+        新实现改成"选一个让净距**最大化**的动作"：对每个候选按短时预测估计
+        净距变化，取最优；只要有任何候选能让净距变大就执行它。只有真的全都
+        变差（例如被机台和同伴夹住）才退化为原地转 —— 那种情况靠转朝向改变
+        几何，下一帧再试。
+        """
+        if closest is None or rid not in self.pos or closest not in self.pos:
             return 0.0, 0.0
+        if self.escape_legacy:
+            # 旧行为：凡是"朝对方开"的方向一律排除，剩不下就原地转。
+            # 两台车已经压在一起时这个判据自相矛盾 —— 任何移动都会让某一点
+            # 更靠近对方，于是候选全被排除，只能原地转，净距永不改变。
+            sector0 = self.get_relative_robot_sector(rid, closest)
+            cands0 = {
+                "front": [-0.16, 0.12], "back": [0.16, -0.12],
+                "left": [-0.12, 0.12], "right": [-0.12, 0.12],
+            }.get(sector0, [])
+            block = max(HARD_SAFETY_DISTANCE, COLLISION_ESCAPE_BLOCK_DISTANCE)
+            for lin in cands0:
+                if not self.is_linear_motion_toward_any_close_robot(rid, lin,
+                                                                    distance=block):
+                    return lin, 0.0
+            return 0.0, self.choose_escape_rotation(rid, distance=block)
         sector = self.get_relative_robot_sector(rid, closest)
+        # 候选线速度按"面朝哪边"给出：正 = 沿车头，负 = 倒车。
+        # 倒车是最有效的脱离手段之一，所以第一个候选就把它列上。
         cands = {
             "front": [-0.16, 0.12], "back": [0.16, -0.12],
             "left": [-0.12, 0.12], "right": [-0.12, 0.12],
-        }.get(sector, [])
-        block = max(HARD_SAFETY_DISTANCE, COLLISION_ESCAPE_BLOCK_DISTANCE)
+        }.get(sector, [0.12, -0.12])
+
+        hx, hy = HULL_LEN / 2 + AVOID_MARGIN, HULL_WID / 2 + AVOID_MARGIN
+        me = obb_corners(*self.pos[rid], self.yaw.get(rid, 0.0), hx, hy)
+        other = obb_corners(*self.pos[closest], self.yaw.get(closest, 0.0), hx, hy)
+        gap0 = obb_gap(me, other)
+
+        yaw = self.yaw.get(rid, 0.0)
+        dt = 0.5                       # 预测 0.5 s 后的位置
+        best_lin, best_gap = None, gap0
         for lin in cands:
-            if not self.is_linear_motion_toward_any_close_robot(rid, lin, distance=block):
-                return lin, 0.0
-        return 0.0, self.choose_escape_rotation(rid, distance=block)
+            nx = self.pos[rid][0] + lin * math.cos(yaw) * dt
+            ny = self.pos[rid][1] + lin * math.sin(yaw) * dt
+            after = obb_corners(nx, ny, yaw, hx, hy)
+            g = obb_gap(after, other)
+            if g > best_gap + 1e-6:
+                best_gap, best_lin = g, lin
+        if best_lin is not None:
+            return best_lin, 0.0
+        # 全都拉不开：靠转朝向换几何，下一帧重新判
+        return 0.0, self.choose_escape_rotation(rid)
 
     def closest_gap(self, rid):
         """最近同伴及其与我的**轮廓净距**（米）。"""
