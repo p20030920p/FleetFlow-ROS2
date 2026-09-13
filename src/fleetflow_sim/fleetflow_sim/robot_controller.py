@@ -765,7 +765,26 @@ class RobotController(Node):
         tx, ty = self._target_xy()
         if tx is None:
             return False
-        return math.hypot(tx - self.x, ty - self.y) < 0.20
+        d = math.hypot(tx - self.x, ty - self.y)
+        if d < 0.20:
+            return True
+        # ---------------------------------------------------------------
+        # 靠泊收敛：距离够近、且只剩最后一个路径点时，直接算到达。
+        #
+        # 为什么必须加这一条 —— 实测（.workbench/pursuitchk.py）：
+        # 车开到世界 (3.21, 3.08)，目标是 storage_empty_slot_0 (3.40, 3.00)，
+        # 距离 **0.21 m**，而到达阈值是 0.20 m —— 差 **1 cm** 判不到达；
+        # 同一时刻朝向误差 **-175.9°**（车头几乎背对目标），纯追踪于是持续
+        # 输出 v=0, w=±1.2 原地旋转。而**原地转不改变到目标的距离**，
+        # 那 1 cm 就永远补不上：车无限旋转，yaw 极差 6.28 rad（整圈），
+        # 有效位移速度只有上报速度的 40%（0.133 vs 0.33 m/s）。
+        #
+        # 逻辑上也不该要求"对准了才算到"：装卸不需要车头精确朝向目标，
+        # 实车进站本来就是先到位、有必要再微调朝向。0.35 m 这点额外宽容
+        # 只为吃掉"路径最后一点已在脚下、朝向却差 180°"这个死锁。
+        if d < 0.35 and len(self.pursuit.remaining_path()) <= 1:
+            return True
+        return False
 
     def _front_peer(self, dist: float = 0.60, half_angle: float = 0.9):
         """正前方锥形内最近的同伴（没有则 None）。
