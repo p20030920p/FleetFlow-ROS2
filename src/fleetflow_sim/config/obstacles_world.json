@@ -1,0 +1,157 @@
+{
+ "source": "textile_factory.sdf",
+ "note": "由 tools/derive_obstacles.py 从世界碰撞体生成，勿手改",
+ "inflate": 0.28,
+ "obstacles": [
+  {
+   "name": "carding_machine_0_motor",
+   "rect": [
+    7.5,
+    2.1,
+    7.9,
+    2.5
+   ],
+   "height": 0.56
+  },
+  {
+   "name": "carding_machine_1_motor",
+   "rect": [
+    7.5,
+    5.1,
+    7.9,
+    5.5
+   ],
+   "height": 0.56
+  },
+  {
+   "name": "carding_machine_2_motor",
+   "rect": [
+    7.5,
+    8.1,
+    7.9,
+    8.5
+   ],
+   "height": 0.56
+  },
+  {
+   "name": "carding_machine_3_motor",
+   "rect": [
+    7.5,
+    11.1,
+    7.9,
+    11.5
+   ],
+   "height": 0.56
+  },
+  {
+   "name": "drawing_machine_0_creel_0",
+   "rect": [
+    13.84,
+    3.51,
+    14.26,
+    3.93
+   ],
+   "height": 0.94
+  },
+  {
+   "name": "drawing_machine_0_creel_1",
+   "rect": [
+    14.37,
+    3.51,
+    14.79,
+    3.93
+   ],
+   "height": 0.94
+  },
+  {
+   "name": "drawing_machine_0_creel_2",
+   "rect": [
+    14.91,
+    3.51,
+    15.33,
+    3.93
+   ],
+   "height": 0.94
+  },
+  {
+   "name": "drawing_machine_0_creel_3",
+   "rect": [
+    15.44,
+    3.51,
+    15.86,
+    3.93
+   ],
+   "height": 0.94
+  },
+  {
+   "name": "drawing_machine_1_creel_0",
+   "rect": [
+    13.84,
+    9.51,
+    14.26,
+    9.93
+   ],
+   "height": 0.94
+  },
+  {
+   "name": "drawing_machine_1_creel_1",
+   "rect": [
+    14.37,
+    9.51,
+    14.79,
+    9.93
+   ],
+   "height": 0.94
+  },
+  {
+   "name": "drawing_machine_1_creel_2",
+   "rect": [
+    14.91,
+    9.51,
+    15.33,
+    9.93
+   ],
+   "height": 0.94
+  },
+  {
+   "name": "drawing_machine_1_creel_3",
+   "rect": [
+    15.44,
+    9.51,
+    15.86,
+    9.93
+   ],
+   "height": 0.94
+  },
+  {
+   "name": "office_base",
+   "rect": [
+    23.2,
+    12.8,
+    25.8,
+    15.4
+   ],
+   "height": 0.12
+  },
+  {
+   "name": "office_wall_s",
+   "rect": [
+    23.2,
+    12.79,
+    25.8,
+    12.91
+   ],
+   "height": 2.6
+  },
+  {
+   "name": "office_wall_w",
+   "rect": [
+    23.19,
+    12.8,
+    23.31,
+    15.4
+   ],
+   "height": 2.6
+  }
+ ]
+}

@@ -32,7 +32,11 @@ import time
 RUN_FIELDS = ["run_label", "policy", "num_robots", "wall_s", "makespan_s", "completed",
               "throughput_per_min", "latency_mean_s", "latency_p50_s", "latency_p95_s",
               "utilisation_mean", "distance_total_m", "traffic_rejected", "traffic_expired",
-              "min_robot_distance_m", "near_miss_events", "charging_events", "reassignments"]
+              "min_robot_distance_m", "near_miss_events", "charging_events", "reassignments",
+              # 轮廓净距与真实重叠次数（metrics.py 用有向矩形判据算出的安全指标）。
+              # 必须与 metrics.RUN_FIELDS 同步，否则汇总时报
+              # "dict contains fields not in fieldnames"。
+              "min_robot_gap_m", "overlap_events"]
 
 
 def run_once(policy: str, seed: int, seconds: int, robots: int, out_root: str,

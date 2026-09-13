@@ -10,6 +10,8 @@
 ``random``    随机分配。下界基线，说明"随便派"有多差。
 ``nearest``   请求车辆取离自己最近的一单。完全去中心化，只看单台车的局部
               信息，典型现象是"近处任务被远处的车抢走"（myopic）。
+``zone``      分区派单：车只领自己所在作业区的任务。工业现场最常见的做法，
+              用来回答"招标式分配比人工分区强多少"。
 ``ssi``       顺序单件拍卖 Sequential Single-Item Auction（Lagoudakis et al.,
               2005）。每轮在所有 (空闲车, 待办任务) 组合里挑**空驶距离**最小
               的一对成交，重复直到无对可配。市场拍卖类 MRTA 的标准方法。
@@ -47,7 +49,7 @@ ABLATIONS = {
     "ca_noage":   {"W_AGE": 0.0},        # 去掉任务老化
 }
 
-POLICIES = ("random", "nearest", "ssi", "hungarian", *ABLATIONS)
+POLICIES = ("random", "nearest", "zone", "ssi", "hungarian", *ABLATIONS)
 
 # ---------------------------------------------------------------------------
 # ca_ssi 代价权重（单位：等效米）。全部折算成"米"之后各权重的物理含义明确，
@@ -255,6 +257,44 @@ def pick_hungarian(candidates: List, fleet: Dict[int, dict],
     return (rids[int(ri[k])], candidates[int(ci[k])])
 
 
+def pick_zone(candidates: List, fleet: Dict[int, dict],
+              rng: random.Random,
+              now: float = 0.0,
+              dock_load: Optional[Dict[str, int]] = None
+              ) -> Optional[Tuple[int, object]]:
+    """分区派单（zone dispatch）—— 工业现场最常见的做法，作为对照基线。
+
+    规则：把车间按 x 切成三个作业区（储料/空筒区、并条区、粗纱/成品区，
+    见 ``ZONE_BOUNDS``）。一台车**只领自己所在区里的任务**；本区没单可领时
+    才跨区（否则会有人闲着、有人过载，那不是分区派单，那是分区停机）。
+
+    为什么值得单独做一条对照：它是真实车间里最常见的启发式（"这个区归你，
+    那个区归他"），工程上简单、可解释、不依赖通信。但它把车队**静态绑定**在
+    地理上，代价是跨区负载无法均衡：某区突然来一堆单时，其他区的车不会来帮，
+    而某区空闲时车也只能干等。SSI / CA-SSI 没有这个约束，所以这条基线正好
+    回答"招标式分配比工业常用的分区派单好多少"。
+    """
+    if not candidates or not fleet:
+        return None
+    local, remote = [], []
+    for rid, st in fleet.items():
+        zr = zone_of(st.get("x", 0.0))
+        for t in candidates:
+            (local if zone_of(t.source_x) == zr else remote).append((rid, t))
+    pool = local or remote
+    if not pool:
+        return None
+    # 区内仍按"最近空驶"挑，这样与 ssi 的差别纯粹来自分区约束
+    best = None
+    for rid, t in pool:
+        st = fleet[rid]
+        c = travel_cost((st.get("x", 0.0), st.get("y", 0.0)), t)
+        key = (round(c, 6), t.priority, t.task_id, rid)
+        if best is None or key < best[0]:
+            best = (key, rid, t)
+    return (best[1], best[2]) if best else None
+
+
 # 统一入口：策略名 -> 是否集中式（需要全局车队状态）
 def make_ca_picker(weights: Optional[Dict[str, float]]):
     """把一组权重绑成一个 picker，签名与其它 picker 一致。"""
@@ -264,8 +304,9 @@ def make_ca_picker(weights: Optional[Dict[str, float]]):
     return _pick
 
 
-CENTRAL = {"ssi", "ca_ssi", "hungarian", *ABLATIONS}
+CENTRAL = {"zone", "ssi", "ca_ssi", "hungarian", *ABLATIONS}
 PICKERS = {
+    "zone": pick_zone,
     "ssi": pick_ssi,
     "hungarian": pick_hungarian,
     **{name: make_ca_picker(w) for name, w in ABLATIONS.items()},

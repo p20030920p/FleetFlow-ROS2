@@ -394,3 +394,14 @@ if __name__ == "__main__":
     with open(os.path.normpath(OUT), "w", encoding="utf-8") as f:
         f.write(text)
     print(f"wrote {os.path.normpath(OUT)} · {len(PARTS)} models · {len(text)//1024} KB")
+    # 同步刷新"规划器要避开的障碍"清单。
+    # 必须放在这里：世界与规划器的障碍表曾经是两份各自手写的清单，长期不一致，
+    # 结果是"路径合法但半路被 LiDAR 拦下"。生成一次世界就重导一次，两者不再漂移。
+    try:
+        import subprocess
+        import sys as _sys
+        _here = os.path.dirname(os.path.abspath(__file__))
+        subprocess.run([_sys.executable, os.path.join(_here, "derive_obstacles.py")],
+                       check=True)
+    except Exception as exc:                     # noqa: BLE001 - 提示即可，不阻断出图
+        print(f"!! 障碍清单未刷新（{exc}）；请手动运行 tools/derive_obstacles.py")

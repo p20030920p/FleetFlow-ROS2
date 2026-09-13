@@ -1,0 +1,2 @@
+run_label,policy,num_robots,wall_s,makespan_s,completed,throughput_per_min,latency_mean_s,latency_p50_s,latency_p95_s,utilisation_mean,distance_total_m,traffic_rejected,traffic_expired,min_robot_distance_m,near_miss_events,charging_events,reassignments,min_robot_gap_m,overlap_events
+random_s3,random,8,119.2,114.144,12,6.041,27.225,22.755,48.754,0.618,183.56,0,0,0.645,0,0,0,0.043,0

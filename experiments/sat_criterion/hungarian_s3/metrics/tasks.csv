@@ -1,0 +1,4 @@
+task_id,material,source,dest,robot_id,created_s,assigned_s,delivered_s,latency_s,travel_cost
+2,empty,storage_empty_slot_1,carding_waiting_1,0,0.19075703620910645,0.453,21.054,20.863,
+1,empty,storage_empty_slot_0,carding_waiting_0,1,0.19035577774047852,0.399,25.398,25.208,
+3,empty,storage_empty_slot_2,carding_waiting_2,2,2.090975522994995,2.141,81.939,79.848,

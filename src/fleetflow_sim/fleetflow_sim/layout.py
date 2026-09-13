@@ -165,8 +165,52 @@ def obstacle_rects():
     return out
 
 
-def static_boxes():
-    """A* 用的静态障碍矩形 [(x0, y0, x1, y1), ...]。"""
+# 规划器给静态障碍留的膨胀量（车体外接圆半径 0.356 上取整到栅格可用的值）。
+# 必须与 planner.Grid 的 inflate 默认值一致 —— 世界审计脚本靠它判断
+# "某个碰撞体是否已被已知障碍覆盖"。
+STATIC_INFLATE = 0.28
+
+# 从世界碰撞体自动导出的补充障碍（tools/derive_obstacles.py 生成）。
+# 手写清单只覆盖机台的**主体**矩形，而 build_world.py 还给机器加了电机、
+# 警示垫、并条机后部条筒架、粗纱机端板等外凸零件，以及办公室隔墙。
+# 规划器看不见它们，车就会"照合法路径走、半路被 LiDAR 拦下"。
+_WORLD_OBSTACLES = None
+
+
+def world_obstacle_rects():
+    """自动导出的补充障碍矩形；文件缺失时返回空表（不致命）。"""
+    global _WORLD_OBSTACLES
+    if _WORLD_OBSTACLES is None:
+        import json
+        import os
+        here = os.path.dirname(os.path.abspath(__file__))
+        cands = [
+            # 源码树（--symlink-install 与直接跑源码都走这条）
+            os.path.join(here, "..", "config", "obstacles_world.json"),
+            # 安装后的 share 目录
+            os.path.join(here, "..", "..", "share", "fleetflow_sim", "config",
+                         "obstacles_world.json"),
+        ]
+        _WORLD_OBSTACLES = []
+        for path in cands:
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                _WORLD_OBSTACLES = [tuple(o["rect"]) for o in data.get("obstacles", [])]
+                break
+            except (OSError, ValueError, KeyError):
+                continue
+    return _WORLD_OBSTACLES
+
+
+def base_static_boxes():
+    """**手写**的静态障碍矩形：机台主体 / 货架 / 充电柜 / 通道杂物。
+
+    单独留一个函数是必要的：`tools/derive_obstacles.py` 要拿它判断"某个
+    碰撞体是否已被已知障碍覆盖"。如果它去比 `static_boxes()`（已经并入了
+    导出结果），那第二次生成时所有零件都"已被覆盖"，导出清单会变成空 ——
+    生成器就不幂等了。这个坑实际踩到过：重跑一次从 15 个变 0 个。
+    """
     boxes = [m[1] for m in all_machines()]
     boxes += list(rack_rects().values())
     boxes += obstacle_rects()
@@ -174,6 +218,16 @@ def static_boxes():
         cy = c["y"] + CHARGER_CABINET_DY
         boxes.append((c["x"] - 0.34, cy - 0.26, c["x"] + 0.34, cy + 0.26))
     return boxes
+
+
+def static_boxes():
+    """A* 用的静态障碍矩形 [(x0, y0, x1, y1), ...]。
+
+    = 手写清单（业务语义：哪台机器占哪块地）+ 从世界碰撞体导出的补充障碍
+    （物理事实：电机、警示垫、并条机条筒架、粗纱机端板、办公室隔墙……）。
+    两套合并是刻意的，缺了后者就会出现"路径合法但半路被 LiDAR 拦下"。
+    """
+    return base_static_boxes() + world_obstacle_rects()
 
 
 def park_poses(n: int):
