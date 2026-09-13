@@ -61,6 +61,30 @@ def quat_from_yaw(yaw: float):
     return (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5))
 
 
+def _obb_corners(x, y, yaw, hx, hy):
+    c, s = math.cos(yaw), math.sin(yaw)
+    return [(x + c * a - s * b, y + s * a + c * b)
+            for a, b in ((hx, hy), (hx, -hy), (-hx, -hy), (-hx, hy))]
+
+
+def _obb_overlap(A, B) -> bool:
+    """分离轴定理：两个有向矩形是否相交。"""
+    for poly in (A, B):
+        for i in range(4):
+            x1, y1 = poly[i]
+            x2, y2 = poly[(i + 1) % 4]
+            nx, ny = -(y2 - y1), (x2 - x1)
+            n = math.hypot(nx, ny)
+            if n < 1e-9:
+                continue
+            nx, ny = nx / n, ny / n
+            pa = [nx * q[0] + ny * q[1] for q in A]
+            pb = [nx * q[0] + ny * q[1] for q in B]
+            if max(pa) < min(pb) or max(pb) < min(pa):
+                return False
+    return True
+
+
 class RobotController(Node):
     def __init__(self):
         super().__init__("robot_controller")
@@ -71,8 +95,20 @@ class RobotController(Node):
         self.declare_parameter("dwell_s", 1.2)
         self.declare_parameter("use_internal_kinematics", False)
         # 安全 / 车队行为
-        self.declare_parameter("avoid_slow_m", 1.30)
-        self.declare_parameter("avoid_stop_m", 0.60)
+        # 安全距离必须由**车体几何**推出来，不能拍一个数：
+        # 车体 0.56×0.44 m，外接圆半径 0.356 m，所以两车在任意朝向下不重叠
+        # 至少需要 0.712 m 的**车心距**。曾经写死 0.34 m —— 那是主动把车开到
+        # 必然重叠的距离上，Gazebo 里就会真的撞在一起。
+        self.hull_len, self.hull_wid = 0.56, 0.44
+        self.hull_r = math.hypot(self.hull_len, self.hull_wid) / 2.0   # 0.356 m
+        self.hull_diag = 2 * self.hull_r                              # 0.712 m
+        # 碰撞判据的安全余量：车体各外扩这么多，仍算"要撞了"
+        self.declare_parameter("avoid_margin_m", 0.05)
+        # 锥形互让只负责"礼貌"，真正的防撞由上面的有向矩形判据兜底。
+        # 阈值给太大车会变得过度胆小：实测 slow=1.8/stop=1.0 时 6 台车互相让到
+        # 几乎不动（86 次卡死、310 秒只送达 12 单）。
+        self.declare_parameter("avoid_slow_m", 1.20)
+        self.declare_parameter("avoid_stop_m", 0.70)
         self.declare_parameter("scan_stop_m", 0.38)
         self.declare_parameter("stuck_timeout_s", 10.0)
         # 电量
@@ -419,7 +455,9 @@ class RobotController(Node):
     def _go_to(self, gx, gy, state, reset_strikes: bool = True):
         # 把当前同伴位置写进动态层，让 A* 直接绕开，而不是硬挤
         peers = [(p.x, p.y) for rid, p in self.peers.items() if rid != self.rid]
-        self.grid.set_dynamic(peers, radius=0.50)
+        # 动态障碍层要按"同伴的外接圆 + 栅格本身的膨胀量"来画，
+        # 这样 A* 绕开同伴时留出的余量，和绕开墙、机台时是一样的。
+        self.grid.set_dynamic(peers, radius=self.hull_r + self.grid.inflate)
         path = plan(self.grid, (self.x, self.y), (gx, gy))
         self.grid.clear_dynamic()
         if not path:
@@ -547,7 +585,41 @@ class RobotController(Node):
         if self._scan_min < scan_stop and v > 0.0:
             self.yields += 1
             return 0.0, w * 0.3
-        # 2) 同伴：只看"我前方锥形"里的车
+        # 2) 硬安全距离：用**有向矩形**判据，而不是圆盘。
+        #    只用"车心距"既不对又难调：0.34 m 会真的撞上（车长 0.56 m），
+        #    改成两车外接圆之和 0.712 m 又过于保守 —— 并排本来只需要 0.44 m，
+        #    结果是车频繁互停、吞吐从 130 单掉到 14 单。
+        #    位置和朝向都在 /fleet/robots 里，所以直接用分离轴定理判两个矩形是否相交：
+        #    既不会漏掉真碰撞，也不会挡掉合法的并排通行。
+        margin = float(self.get_parameter("avoid_margin_m").value)
+        hx, hy = self.hull_len / 2 + margin, self.hull_wid / 2 + margin
+        me = _obb_corners(self.x, self.y, self.yaw, hx, hy)
+        for rid, p in self.peers.items():
+            if rid == self.rid:
+                continue
+            d = math.hypot(p.x - self.x, p.y - self.y)
+            close = d < self.hull_diag + 2 * margin      # 粗筛，省掉绝大多数 SAT 计算
+            if close and _obb_overlap(me, _obb_corners(p.x, p.y, p.yaw, hx, hy)):
+                hard = True
+            else:
+                hard = False
+            if hard or d < 1e-6:
+                # 双方都停会死锁，所以用确定性优先级放一台走 —— 但**只放它"往外走"**。
+                # 早前的写法是"id 小的一律以 0.12 m/s 挪"，结果当它的路径正好朝向
+                # 对方时，就是主动往车里开：实测出现 1900 次重叠，最小车心距 0.259 m。
+                self.yields += 1
+                if rid > self.rid:
+                    return 0.0, 0.0                     # 让行车完全停住
+                ax, ay = self.x - p.x, self.y - p.y     # 从对方指向我
+                away = math.hypot(ax, ay)
+                if away < 1e-6:
+                    return 0.0, 0.0
+                # 只有当前进方向确实在"远离对方"时才允许低速脱离
+                if (math.cos(self.yaw) * ax + math.sin(self.yaw) * ay) / away > 0.25:
+                    return min(v, 0.12), w
+                return 0.0, 0.0
+
+        # 3) 前方锥形内的互让：只看会挡我路的那台
         for rid, p in self.peers.items():
             if rid == self.rid:
                 continue
@@ -559,10 +631,6 @@ class RobotController(Node):
             ang = abs(math.atan2(math.sin(bearing), math.cos(bearing)))
             if ang > 0.9:                              # 不在前方约 52° 内
                 continue
-            hard = 0.34                                 # 硬安全距离：谁都不能再靠近
-            if d < hard:
-                self.yields += 1
-                return 0.0, 0.0
             if rid < self.rid:                          # 确定性优先级：id 小的先行通过
                 if d < stop:
                     v = min(v, 0.14)                    # 低速挤过去，而不是无视对方

@@ -96,6 +96,15 @@ class _Frame:
         self.png: bytes | None = None
         self.n = 0
         self.t = 0.0
+        self.watchers = 0        # 有几个流连接在看这个视图
+
+    def watch(self, delta: int):
+        with self.lock:
+            self.watchers = max(0, self.watchers + delta)
+
+    def age(self) -> float:
+        with self.lock:
+            return time.time() - self.t
 
     def put(self, data: bytes):
         with self.lock:
@@ -119,7 +128,7 @@ class LiveView(Dashboard):
         self.declare_parameter("host", "127.0.0.1")
         # 注意不能用 every_s：父类 Dashboard 已经声明过它（那是"落盘出图"的开关），
         # 重复声明会直接抛 ParameterAlreadyDeclaredException。
-        self.declare_parameter("refresh_s", 1.5)
+        self.declare_parameter("refresh_s", 0.25)   # 渲染能力上限约 4~6 fps
         self.declare_parameter("size", "1280x800")
 
         self.port = int(self.get_parameter("port").value)
@@ -162,24 +171,56 @@ class LiveView(Dashboard):
         return path
 
     def _tick(self):
-        # 出图比定时器慢时直接跳过这一拍，避免回调排队把执行器堵死
+        """只渲染当前有人看的视图。
+
+        这是帧率的关键：总览一帧 250 ms、大屏 160 ms，如果每拍都同时渲染两张，
+        即使把间隔压到最小也只能到 ~2.5 fps。实际同一时刻只有一块屏在看，
+        所以按观看者计数决定渲染谁 —— 单独看大屏时能跑到 6 fps 以上。
+        出图比定时器慢时跳过这一拍，避免回调排队把执行器堵死。
+        """
+        if self.rendering:
+            return
+        want_board = self.frame.watchers > 0
+        want_map = self.map_frame.watchers > 0
+        if not (want_board or want_map):
+            return
+        self.rendering = True
+        try:
+            if want_board:
+                buf = _NamedBuffer()  # 让 Dashboard 的日志打印 "frame -> live" 而不是 repr
+                self.render(path=buf, size=self.size)
+                self.frame.put(buf.getvalue())
+            if want_map:
+                mbuf = _NamedBuffer()
+                self.render_map(path=mbuf, size=self.map_size)
+                self.map_frame.put(mbuf.getvalue())
+        except Exception as exc:                      # noqa: BLE001
+            self.get_logger().warn(f"render failed: {exc}")
+        finally:
+            self.rendering = False
+
+    def ensure(self, which: str, stale_s: float = 0.4):
+        """静图端点：缓存过期就现渲染一张，保证 /frame.png 永远有内容。"""
+        f = self.frame if which == "board" else self.map_frame
+        if f.age() < stale_s:
+            return
         if self.rendering:
             return
         self.rendering = True
         try:
-            buf = _NamedBuffer()      # 让 Dashboard 的日志打印 "frame -> live" 而不是 repr
-            self.render(path=buf, size=self.size)
-            self.frame.put(buf.getvalue())
-            mbuf = _NamedBuffer()
-            self.render_map(path=mbuf, size=self.map_size)
-            self.map_frame.put(mbuf.getvalue())
+            buf = _NamedBuffer()
+            if which == "board":
+                self.render(path=buf, size=self.size)
+            else:
+                self.render_map(path=buf, size=self.map_size)
+            f.put(buf.getvalue())
         except Exception as exc:                      # noqa: BLE001
             self.get_logger().warn(f"render failed: {exc}")
         finally:
             self.rendering = False
 
 
-def _handler_for(frame: _Frame, map_frame: _Frame, size):
+def _handler_for(frame: _Frame, map_frame: _Frame, size, ensure=None):
     page = (PAGE % {"size": f"{size[0]}×{size[1]}"}).encode("utf-8")
     sources = {"/frame.png": frame, "/map.png": map_frame,
                "/stream": frame, "/map/stream": map_frame}
@@ -199,6 +240,8 @@ def _handler_for(frame: _Frame, map_frame: _Frame, size):
                 self.end_headers()
                 self.wfile.write(page)
             elif path in ("/frame.png", "/map.png"):
+                if ensure is not None:
+                    ensure("board" if path == "/frame.png" else "map")
                 png, _, _ = sources[path].get()
                 if png is None:
                     self.send_error(503, "no frame yet")
@@ -217,6 +260,7 @@ def _handler_for(frame: _Frame, map_frame: _Frame, size):
                                  "multipart/x-mixed-replace; boundary=frame")
                 self.end_headers()
                 last = -1
+                src.watch(+1)
                 try:
                     while True:
                         png, n, _ = src.get()
@@ -231,6 +275,8 @@ def _handler_for(frame: _Frame, map_frame: _Frame, size):
                         self.wfile.write(b"\r\n")
                 except (BrokenPipeError, ConnectionResetError):
                     pass
+                finally:
+                    src.watch(-1)
             else:
                 self.send_error(404)
 
@@ -241,7 +287,8 @@ def main(argv=None):
     rclpy.init(args=argv)
     node = LiveView()
     srv = ThreadingHTTPServer((node.host, node.port),
-                              _handler_for(node.frame, node.map_frame, node.map_size))
+                              _handler_for(node.frame, node.map_frame, node.map_size,
+                                           ensure=node.ensure))
     srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     node.get_logger().info(f"打开 http://{node.host}:{node.port} 查看实时看板")

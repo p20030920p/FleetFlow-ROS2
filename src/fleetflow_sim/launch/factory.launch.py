@@ -172,7 +172,7 @@ def generate_launch_description():
         # 实时网页看板：gui:=true web:=true 可同时看 Gazebo 与 matplotlib 平面图
         DeclareLaunchArgument("web", default_value="false"),
         DeclareLaunchArgument("web_port", default_value="8080"),
-        DeclareLaunchArgument("web_every", default_value="1.5"),
+        DeclareLaunchArgument("web_every", default_value="0.25"),
         DeclareLaunchArgument("web_size", default_value="1280x800"),
         DeclareLaunchArgument("battery_drain", default_value="0.55"),
         DeclareLaunchArgument("policy", default_value="nearest"),

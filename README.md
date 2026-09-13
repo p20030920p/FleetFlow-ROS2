@@ -56,6 +56,12 @@ switches to the plan drawn full-screen (`Esc` or a second click returns), and `/
 that still directly. `web_port`, `web_size`, `web_every` override port, resolution and refresh
 interval. On its own: `ros2 run fleetflow_sim live_view`.
 
+The browser view is the same renderer as the screenshots, redrawn live, so it runs at **4-6 fps**
+(250 ms for the board, 150 ms for the plan) — that is matplotlib's ceiling, not a setting. The
+animation at the top of this page is 12.5 fps because it is **rendered offline** from a recorded
+run, where nothing has to keep up with the simulation; see [Reproducing](#reproducing) for that
+pipeline.
+
 `gui:=false` (default) starts **one** server with `--headless-rendering`; `gui:=true` starts **one**
 GUI. Never both — a second server is what makes a GUI window open and render nothing. If a run was
 killed rather than interrupted, its server survives as an orphan and the next GUI may attach to it:
@@ -200,9 +206,21 @@ the average. Both are kept; neither is claimed to pay for itself here.
 | Docking mode | Inside 0.8 m of the target the LiDAR stop drops to 0.12 m, so the emergency stop can never exceed the arrival tolerance. |
 | Hull self-mask | Returns tested against the vehicle's own outline angle by angle; its front corners otherwise sit in the stop sector at 0.24 m. |
 | Event-driven re-planning | Only when a peer occupies the next 2.2 m of the path — a timer resets pure pursuit mid-turn and the vehicle oscillates in place. |
+| Collision test | Oriented rectangles against each other (separating-axis), not centre distance. See below. |
 
 4 AGVs, 200 s wall clock: **35 tasks dispatched, 5 delivered, 0 errors, 0 watchdog aborts, 0 "no path",
 free memory never below 6.9 GB.**
+
+**Why centre distance is the wrong test.** The body is 0.56 × 0.44 m, so two vehicles need
+0.44 m centre distance side by side and 0.56 m nose to tail, and 0.712 m to be safe at *any*
+orientation. The code used 0.34 m, and applied it only inside a ±52° front cone — so it
+commanded vehicles to a separation at which they must overlap, and ignored anything approaching
+from the side. Gazebo showed it: **1900 overlap events, closest approach 0.259 m, roughly 0.2 m
+of interpenetration.** It is now a separating-axis test between the two oriented rectangles,
+which cannot miss a real overlap and does not forbid a legal side-by-side pass. Measured after:
+**0 intersecting frames, closest approach 0.69 → 1.10 m.** A disc test of the same radius was
+tried first and rejected — it is correct but far too conservative, and throughput in Gazebo fell
+from 130 deliveries to 14.
 
 **Not yet trustworthy.** Under Gazebo the chassis does not reproduce commanded motion: `cmd_vel` held at
 0.5 m/s for 15 s advances 0.17 m instead of 7.5 m. The coordination layer commands correctly (93 % of
