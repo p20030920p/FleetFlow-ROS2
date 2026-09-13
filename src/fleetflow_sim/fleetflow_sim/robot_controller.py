@@ -104,11 +104,10 @@ class RobotController(Node):
         self.hull_diag = 2 * self.hull_r                              # 0.712 m
         # 碰撞判据的安全余量：车体各外扩这么多，仍算"要撞了"
         self.declare_parameter("avoid_margin_m", 0.05)
-        # 锥形互让只负责"礼貌"，真正的防撞由上面的有向矩形判据兜底。
-        # 阈值给太大车会变得过度胆小：实测 slow=1.8/stop=1.0 时 6 台车互相让到
-        # 几乎不动（86 次卡死、310 秒只送达 12 单）。
-        self.declare_parameter("avoid_slow_m", 1.20)
-        self.declare_parameter("avoid_stop_m", 0.70)
+        # 锥形互让负责"礼貌"，真正的防撞由有向矩形判据兜底。
+        # 这两个值保持与 experiments/ 里那批实验一致，否则文档中的数字就与代码脱节。
+        self.declare_parameter("avoid_slow_m", 1.30)
+        self.declare_parameter("avoid_stop_m", 0.60)
         self.declare_parameter("scan_stop_m", 0.38)
         self.declare_parameter("stuck_timeout_s", 10.0)
         # 电量

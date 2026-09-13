@@ -211,16 +211,27 @@ the average. Both are kept; neither is claimed to pay for itself here.
 4 AGVs, 200 s wall clock: **35 tasks dispatched, 5 delivered, 0 errors, 0 watchdog aborts, 0 "no path",
 free memory never below 6.9 GB.**
 
-**Why centre distance is the wrong test.** The body is 0.56 × 0.44 m, so two vehicles need
-0.44 m centre distance side by side and 0.56 m nose to tail, and 0.712 m to be safe at *any*
-orientation. The code used 0.34 m, and applied it only inside a ±52° front cone — so it
-commanded vehicles to a separation at which they must overlap, and ignored anything approaching
-from the side. Gazebo showed it: **1900 overlap events, closest approach 0.259 m, roughly 0.2 m
-of interpenetration.** It is now a separating-axis test between the two oriented rectangles,
-which cannot miss a real overlap and does not forbid a legal side-by-side pass. Measured after:
-**0 intersecting frames, closest approach 0.69 → 1.10 m.** A disc test of the same radius was
-tried first and rejected — it is correct but far too conservative, and throughput in Gazebo fell
-from 130 deliveries to 14.
+**Why centre distance is the wrong test.** The body is 0.56 × 0.44 m: two vehicles need 0.44 m
+centre distance side by side, 0.56 m nose to tail, and 0.712 m to be safe at *any* orientation. The
+code used 0.34 m and applied it only inside a ±52° front cone, so it commanded vehicles into each
+other and ignored anything off to the side. Gazebo showed it — 1900 overlap events, closest approach
+0.259 m. It is now a separating-axis test between the two oriented rectangles: **0 intersecting
+frames, closest approach 0.83 m.**
+
+**Fixing it exposed the next problem, which is the honest headline of this section.** With collisions
+actually prevented the mill jams:
+
+| Avoidance | Tasks | Delivered | Overlaps |
+|---|---:|---:|---:|
+| centre distance, 0.34 m cone (wrong) | 135 | **130** | 1900 |
+| oriented rectangles, loose yielding | 19 | 12 | 0 |
+| oriented rectangles, experiment thresholds | 5 | 1 | 0 |
+
+The 130-delivery run was only productive *because* vehicles pushed through each other. The reactive
+layer — reciprocal yielding plus docking leases — is not enough at this load; aisles need reservations
+the way docks already have them. Until that exists, Gazebo is not a usable throughput demonstrator,
+and the animation at the top of this page is a wall-clock run in which vehicles pass closer than their
+bodies would allow under physics.
 
 **Not yet trustworthy.** Under Gazebo the chassis does not reproduce commanded motion: `cmd_vel` held at
 0.5 m/s for 15 s advances 0.17 m instead of 7.5 m. The coordination layer commands correctly (93 % of
