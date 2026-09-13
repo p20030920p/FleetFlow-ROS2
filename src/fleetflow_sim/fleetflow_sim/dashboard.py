@@ -592,8 +592,10 @@ class Dashboard(Node):
                                          transform=b.fig.transFigure))
 
     # ---------- 车间平面图 ----------
-    def _map_panel(self, b):
-        x0, y0, w, h = 0.013, 0.2775, 0.3865, 0.4485
+    def _map_panel(self, b, region=None):
+        # region 可覆盖：网页端的"大屏"模式就是把平面图铺满整张画布，
+        # 复用同一个绘制函数，才不会出现两块屏画出两个样子。
+        x0, y0, w, h = region if region else (0.013, 0.2775, 0.3865, 0.4485)
         b.rect(x0, y0, w, h, facecolor=PANEL, edgecolor=RULE, lw=0.8, zorder=1)
         b.rect(x0 + 0.0062, y0 + h - 0.0200, 0.0055, 0.0110, facecolor=NAVY, zorder=3)
         b.text(x0 + 0.0160, y0 + h - 0.0145, "车间平面图", size=10.0, weight="bold", color=INK)

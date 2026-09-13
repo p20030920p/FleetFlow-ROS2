@@ -46,11 +46,13 @@ ros2 launch fleetflow_sim factory.launch.py gui:=true        # 带 Gazebo 界面
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # 不启 Gazebo
 
 # Gazebo 界面 + 浏览器里的实时平面图，并排对照
-ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true   # 然后打开 :8080
+ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=8
+# 打开 http://127.0.0.1:8080 —— 点一下画面即进入全屏平面图
 ```
 
 两边读的是同一批话题，所以并排放就能最快地确认平面图里的坐标、朝向、任务流向和三维场景是否一致。
-`web:=true` 在 `http://127.0.0.1:8080` 上提供 MJPEG 流；`web_port` / `web_size` / `web_every`
+页面走 MJPEG 流；**点一下切到铺满全屏的平面图**（`Esc` 或再点一下返回），
+也可以直接取 `/map.png` 拿那一帧静图。`web_port` / `web_size` / `web_every`
 可覆盖端口、分辨率与刷新间隔。单独运行：`ros2 run fleetflow_sim live_view`。
 
 `gui:=false`（默认）只起**一个**带 `--headless-rendering` 的服务端；`gui:=true` 只起**一个**界面。

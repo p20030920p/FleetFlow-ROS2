@@ -45,14 +45,16 @@ ros2 launch fleetflow_sim factory.launch.py                  # Gazebo server onl
 ros2 launch fleetflow_sim factory.launch.py gui:=true        # with the Gazebo GUI
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # no Gazebo
 
-# Gazebo GUI and the floor view live in a browser, side by side
-ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true   # then open :8080
+# Gazebo GUI and the floor plan live in a browser, side by side
+ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=8
+# open http://127.0.0.1:8080 — click the view for a full-screen floor plan
 ```
 
-Both views read the same topics, so putting them next to each other is the quickest way to
-check that the map, headings and task flow agree with the 3D scene. `web:=true` serves an
-MJPEG stream at `http://127.0.0.1:8080`; `web_port`, `web_size` and `web_every` override the
-port, resolution and refresh interval. On its own: `ros2 run fleetflow_sim live_view`.
+Both views read the same topics, so putting them next to each other is the quickest way to check
+that the map, headings and task flow agree with the 3D scene. The page streams MJPEG; clicking it
+switches to the plan drawn full-screen (`Esc` or a second click returns), and `/map.png` fetches
+that still directly. `web_port`, `web_size`, `web_every` override port, resolution and refresh
+interval. On its own: `ros2 run fleetflow_sim live_view`.
 
 `gui:=false` (default) starts **one** server with `--headless-rendering`; `gui:=true` starts **one**
 GUI. Never both — a second server is what makes a GUI window open and render nothing. If a run was
