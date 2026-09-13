@@ -102,6 +102,15 @@ def cleaner_rails():
     每个工序的每一条机弄上方都有一条纵向风道，风道上每隔 1.5 m 挂一个吸嘴，
     沿轨道往复巡回把飞花吸走。少了它，车间看起来就只是"一堆盒子"。
     """
+    for o in L.AISLE_OBSTACLES:
+        # 通道里的临时堆放物：有实体、有警示色，车绕开它们
+        add(box(f"obs_{o['name']}", o["x"], o["y"], 0.34, o["sx"], o["sy"], 0.68,
+                (0.72, 0.68, 0.52), rough=0.85))
+        add(box(f"obsband_{o['name']}", o["x"], o["y"], 0.70, o["sx"] + 0.06,
+                o["sy"] + 0.06, 0.06, (0.92, 0.74, 0.22)))
+        add(box(f"obsfoot_{o['name']}", o["x"], o["y"], 0.06, o["sx"] + 0.16,
+                o["sy"] + 0.16, 0.10, (0.34, 0.33, 0.30)))
+
     for spec in L.STAGES:
         stage = spec["name"]
         h = L.MACHINE_SPEC[stage]["h"]
@@ -329,11 +338,10 @@ def build():
         charger(cname, cspec)
     park_bay()
     control_room()
-    # 泊位上的条筒（空筒库为灰、成品库为红）
-    for i, y in enumerate(L.STORAGE_SLOTS["empty"]["ys"]):
-        add(can(f"dock_empty_{i}", L.STORAGE_SLOTS["empty"]["x"], y, "empty"))
-    for i, y in enumerate(L.STORAGE_SLOTS["red"]["ys"]):
-        add(can(f"dock_red_{i}", L.STORAGE_SLOTS["red"]["x"], y, "red"))
+    # 泊位点上**不放实体条筒**。条筒存放在货架上（storage_rack 已经摆满），
+    # 泊位点是 AGV 的停车位置，地面上有画好的泊位标线。
+    # 曾经在这里放过实体条筒，结果 AGV 被要求开进一个被占住的点：LiDAR 急停
+    # 距离(0.38m)大于到达判定(0.20m)，车永远进不去，反复判"卡死"并放弃任务。
 
     head = f'''<?xml version="1.0" ?>
 <sdf version="1.10">

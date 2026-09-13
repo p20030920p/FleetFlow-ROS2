@@ -439,6 +439,14 @@ class RobotController(Node):
             return layout.CHARGERS[self.held]["x"], layout.CHARGERS[self.held]["y"]
         return None, None
 
+    def _docking(self) -> bool:
+        """是否处于"靠泊段"：离最终目标足够近，且剩余路径很短。"""
+        tx, ty = self._target_xy()
+        if tx is None:
+            return False
+        return (math.hypot(tx - self.x, ty - self.y) < 0.80
+                and self.pursuit.remaining() < 1.20)
+
     def _arrived(self) -> bool:
         if self.pursuit.finished:
             return True
@@ -451,8 +459,15 @@ class RobotController(Node):
         """车车互让 + LiDAR 安全层。"""
         slow = float(self.get_parameter("avoid_slow_m").value)
         stop = float(self.get_parameter("avoid_stop_m").value)
-        # 1) LiDAR：前向有东西就停
-        if self._scan_min < float(self.get_parameter("scan_stop_m").value) and v > 0.0:
+        # 1) LiDAR：前向有东西就停。
+        #    靠泊例外：进入目标点附近后，急停阈值必须放宽到小于到达判定，
+        #    否则"急停 0.38m > 到达 0.20m"会形成一个永远进不去的死区 ——
+        #    车停在 0.28m 处，看门狗判定卡死，几次之后放弃任务。
+        #    这是实车也采用的做法：靠泊段切到低速对接模式。
+        scan_stop = float(self.get_parameter("scan_stop_m").value)
+        if self._docking():
+            scan_stop = min(scan_stop, 0.12)
+        if self._scan_min < scan_stop and v > 0.0:
             self.yields += 1
             return 0.0, w * 0.3
         # 2) 同伴：只看"我前方锥形"里的车

@@ -148,10 +148,28 @@ def all_station_points() -> dict:
     return pts
 
 
+# 正常生产时通道里本来就有的东西：待转运的条筒托盘、清洁工具车、临时堆放的棉包。
+# 它们不在机台行列上，而是压在**通道中间**——车必须中途绕开，而不是沿着机弄直着走。
+AISLE_OBSTACLES = [
+    dict(name="pallet_a", x=9.90, y=7.50, sx=1.10, sy=0.90, cn="待转条筒"),
+    dict(name="cart_b",   x=15.60, y=7.50, sx=0.90, sy=0.80, cn="清洁车"),
+    dict(name="bale_c",   x=20.80, y=4.50, sx=1.20, sy=0.95, cn="棉包"),
+]
+
+
+def obstacle_rects():
+    out = []
+    for o in AISLE_OBSTACLES:
+        out.append((o["x"] - o["sx"] / 2, o["y"] - o["sy"] / 2,
+                    o["x"] + o["sx"] / 2, o["y"] + o["sy"] / 2))
+    return out
+
+
 def static_boxes():
     """A* 用的静态障碍矩形 [(x0, y0, x1, y1), ...]。"""
     boxes = [m[1] for m in all_machines()]
     boxes += list(rack_rects().values())
+    boxes += obstacle_rects()
     for c in CHARGERS.values():
         cy = c["y"] + CHARGER_CABINET_DY
         boxes.append((c["x"] - 0.34, cy - 0.26, c["x"] + 0.34, cy + 0.26))

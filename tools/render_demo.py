@@ -283,13 +283,35 @@ def main() -> int:
     ap.add_argument("--speed", type=float, default=5.0, help="播放倍速")
     ap.add_argument("--fps", type=float, default=12.5)
     ap.add_argument("--max-frames", type=int, default=260)
+    ap.add_argument("--from", dest="t_from", type=float, default=None,
+                    help="只渲染该时刻之后（秒，按录制的时间轴）")
+    ap.add_argument("--to", dest="t_to", type=float, default=None,
+                    help="只渲染该时刻之前")
+    ap.add_argument("--still-at", type=float, default=None,
+                    help="不给 GIF，只导出该时刻（仿真秒）的单帧 PNG")
+    ap.add_argument("--still-scale", type=float, default=1.0,
+                    help="静图缩放，>1 更清晰")
     args = ap.parse_args()
 
     rows = [json.loads(l) for l in open(args.jsonl, encoding="utf-8")]
-    t0, t1 = rows[0]["t"], rows[-1]["t"]
+    # 有仿真时钟就用仿真时间（Gazebo 模式实时因子远小于 1，墙钟会骗人）
+    key = "sim" if rows[0].get("sim") is not None else "t"
+    if args.t_from is not None or args.t_to is not None:
+        lo = args.t_from if args.t_from is not None else rows[0][key]
+        hi = args.t_to if args.t_to is not None else rows[-1][key]
+        # 任务清单要保留窗口之前就存在的任务，否则画面里会凭空冒出方框
+        keep = [r for r in rows if lo <= r[key] <= hi]
+        if len(keep) < 2:
+            print("窗口内没有帧"); return 2
+        rows = keep
+    t0, t1 = rows[0][key], rows[-1][key]
     dur = (t1 - t0) / args.speed
-    n = min(args.max_frames, max(2, int(dur * args.fps)))
-    step = (t1 - t0) / n
+    if args.still_at is not None:
+        n, step = 1, 0.0
+        t0 = t1 = args.still_at
+    else:
+        n = min(args.max_frames, max(2, int(dur * args.fps)))
+        step = (t1 - t0) / n
     # 任务清单取"最终版"，状态随时间重建
     tasks = rows[-1]["tasks"]
     t_first = rows[0]["t"]
@@ -299,13 +321,23 @@ def main() -> int:
     frames = []
     for k in range(n):
         tt = t0 + k * step
-        idx = min(len(rows) - 1, int((tt - t_first) / max(1e-6, rows[1]["t"] - t_first)))
+        idx = min(len(rows) - 1,
+                  int((tt - rows[0][key]) / max(1e-6, rows[1][key] - rows[0][key])))
         rec = rows[idx]
-        fig = plt.figure(figsize=(CW / 100, CH / 100), dpi=100)
+        sc = max(1.0, args.still_scale) if args.still_at is not None else 1.0
+        fig = plt.figure(figsize=(CW * sc / 100, CH * sc / 100), dpi=100)
+        if sc != 1.0:                       # 单帧静图提高分辨率：整体等比放大
+            ax_scale = sc
+        else:
+            ax_scale = 1.0
         fig.patch.set_facecolor(BG)
         ax = fig.add_axes([0, 0, 1, 1])
         ax.set_xlim(0, CW)
         ax.set_ylim(0, CH)
+        if ax_scale != 1.0:
+            # 放大画布时同步放大字号，否则字会显得很小
+            for t in list(ax.texts):
+                t.set_fontsize(t.get_fontsize() * ax_scale)
         ax.axis("off")
 
         # ---- 顶栏 ----
@@ -449,6 +481,11 @@ def main() -> int:
         if k % 25 == 0:
             print(f"  frame {k}/{n}", flush=True)
 
+    if args.still_at is not None:
+        sc = max(1.0, args.still_scale)
+        frames[0].resize((int(CW * sc), int(CH * sc))).save(args.out)
+        print(f"wrote {args.out} · still frame at {args.still_at:g}s")
+        return 0
     frames += [frames[-1]] * int(args.fps * 1.6)      # 末帧停一下，方便看清最终计数
     pal = frames[len(frames) // 2].quantize(colors=128, method=Image.MEDIANCUT)
     frames = [f.quantize(palette=pal, dither=Image.FLOYDSTEINBERG) for f in frames]

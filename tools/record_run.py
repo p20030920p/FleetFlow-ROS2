@@ -24,12 +24,18 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Path
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+from rosgraph_msgs.msg import Clock
 from std_msgs.msg import String
 
 from fleetflow_interfaces.msg import MachineState, RobotStatus, TransportTask
 
 STATE_QOS = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
                        history=HistoryPolicy.KEEP_LAST, depth=50)
+
+# /clock 由 ros_gz_bridge 以 best-effort 发出；reliable 订阅者与它不兼容，收不到任何消息。
+# best-effort 订阅对两种发布端都能工作，所以时钟单独用这一套。
+CLOCK_QOS = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
+                       history=HistoryPolicy.KEEP_LAST, depth=10)
 
 
 class Recorder(Node):
@@ -41,12 +47,14 @@ class Recorder(Node):
         self.min_robots = min_robots
         self.seconds = seconds
         self.t0 = None          # 车队集齐之后才开始计时，首帧不会只有一台车
+        self.sim0 = None
         self.t_end = None
         self.robots: dict[int, RobotStatus] = {}
         self.tasks: dict[int, dict] = {}
         self.machines: dict[str, MachineState] = {}
         self.paths: dict[int, list] = {}       # robot_id -> 剩余规划路径
         self.summary: dict = {}
+        self.sim_t: float | None = None
         self.n = 0
 
         self.create_subscription(RobotStatus, "/fleet/robots", self.on_robot, STATE_QOS)
@@ -56,6 +64,9 @@ class Recorder(Node):
         self.create_subscription(MachineState, "/factory/machines", self.on_machine,
                                  STATE_QOS)
         self.create_subscription(String, "/factory/summary", self.on_summary, STATE_QOS)
+        # 仿真时钟：Gazebo 模式下实时因子远小于 1，回放必须按仿真时间而不是墙钟，
+        # 否则"完整过程"会被压缩成慢动作或者干脆录不到几步。
+        self.create_subscription(Clock, "/clock", self.on_clock, CLOCK_QOS)
         # 每台车的剩余规划路径：动画要画"真正会走的路线"，直线画法看起来像穿墙
         for rid in range(max_robots):
             self.create_subscription(Path, f"/robot_{rid}/path",
@@ -96,6 +107,9 @@ class Recorder(Node):
     def on_machine(self, m: MachineState):
         self.machines[m.name] = m
 
+    def on_clock(self, m: Clock):
+        self.sim_t = m.clock.sec + m.clock.nanosec * 1e-9
+
     def on_path(self, m: Path, rid: int):
         self.paths[rid] = [[round(p.pose.position.x, 2), round(p.pose.position.y, 2)]
                            for p in m.poses]
@@ -113,6 +127,7 @@ class Recorder(Node):
             if len(self.robots) < self.min_robots:
                 return
             self.t0 = now
+            self.sim0 = self.sim_t
             self.t_end = None if self.seconds <= 0 else now + self.seconds
             self.get_logger().info(f"fleet ready ({len(self.robots)} robots) - recording starts")
             return
@@ -122,6 +137,7 @@ class Recorder(Node):
             raise SystemExit(0)
         rec = {
             "t": round(now - self.t0, 3),
+            "sim": None if self.sim_t is None else round(self.sim_t - (self.sim0 or self.sim_t), 3),
             "robots": [[r.robot_id, round(r.x, 3), round(r.y, 3), round(r.yaw, 3),
                         r.state, int(r.task_id), round(float(r.battery), 1)]
                        for r in sorted(self.robots.values(), key=lambda z: z.robot_id)],
