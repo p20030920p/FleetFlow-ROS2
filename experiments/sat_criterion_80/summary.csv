@@ -1,0 +1,5 @@
+run_label,policy,num_robots,wall_s,makespan_s,completed,throughput_per_min,latency_mean_s,latency_p50_s,latency_p95_s,utilisation_mean,distance_total_m,traffic_rejected,traffic_expired,min_robot_distance_m,near_miss_events,charging_events,reassignments,min_robot_gap_m,overlap_events
+ca_ssi_s1,ca_ssi,8,119.4,96.47,16,8.041,20.119,12.919,40.585,0.539,197.58,0,0,0.608,0,0,0,0.035,0
+ca_ssi_s2,ca_ssi,8,119.2,118.517,17,8.554,25.395,18.491,45.51,0.672,215.97,0,0,0.609,0,0,0,0.049,0
+ssi_s1,ssi,8,119.3,95.3,18,9.055,20.018,17.412,31.481,0.585,250.54,0,0,0.649,0,0,0,0.056,0
+ssi_s2,ssi,8,119.2,93.399,16,8.052,17.905,15.317,27.844,0.642,232.16,0,0,0.638,0,0,0,0.064,0

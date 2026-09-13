@@ -50,6 +50,11 @@ class TrafficManager(Node):
         self.declare_parameter("max_wait_s", 45.0)
         self.declare_parameter("rate_hz", 10.0)
         self.declare_parameter("num_robots", 8)
+        # 碰撞判据开关，**只为对照实验**保留：
+        #   outline（默认）= 两车轮廓净距，与控制器一致
+        #   centre        = 旧的车心距判据（1.5 m 起减速），存档对照用
+        # 留着它是为了能回答"改成轮廓判据到底有没有用"，而不是只能靠记忆对比。
+        self.declare_parameter("collision_criterion", "outline")
 
         self.ttl = float(self.get_parameter("lease_ttl_s").value)
         self.leases: dict[str, Lease] = {}
@@ -65,6 +70,8 @@ class TrafficManager(Node):
         # ---- 交通协调层 ----
         n = int(self.get_parameter("num_robots").value)
         self.layer = TrafficLayer(n, logger=self.get_logger())
+        crit = str(self.get_parameter("collision_criterion").value)
+        self.layer.centre_criterion = (crit == "centre")
         self.peers: dict[int, RobotStatus] = {}
         self.last_seen: dict[int, float] = {}
 

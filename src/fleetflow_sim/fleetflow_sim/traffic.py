@@ -211,6 +211,9 @@ class TrafficLayer:
         self.num_robots = int(num_robots)
         self.log = logger
         self.grid = Grid()
+        # 对照实验开关：True 时 collision_tier 退回旧的车心距判据。
+        # 只由 traffic_manager 的 collision_criterion 参数设置。
+        self.centre_criterion = False
         self.reset()
 
     # ================================================================
@@ -851,6 +854,18 @@ class TrafficLayer:
         正常并排/跟车误判成"快撞了"，全队被压到 0.3 倍速。
         """
         if rid not in self.pos:
+            return False, 1.0, False
+        if self.centre_criterion:
+            # 旧判据（存档对照）：车心距 1.5 m 起减速、0.25 m 硬停。
+            closest, d = self.get_closest_robot(rid)
+            if closest is None:
+                return False, 1.0, False
+            if d < CRITICAL_SAFETY_DISTANCE:
+                return True, 0.0, True
+            if d < HARD_SAFETY_DISTANCE:
+                return True, 0.35, False
+            if d < 1.5:
+                return True, max(0.3, d / 1.5), False
             return False, 1.0, False
         closest, gap = self.closest_gap(rid)
         if closest is None:

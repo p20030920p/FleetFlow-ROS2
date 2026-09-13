@@ -146,6 +146,13 @@ dominates every other term and the auction degenerates to FIFO.
 
 5 policies × 3 seeds × 120 s, 80 units in circulation, identical plant — only the fleet differs.
 
+> **Status of these numbers.** They were measured before the traffic layer and the
+> controller were put on a single collision criterion, and I have not been able to
+> reproduce them under the current code (a fresh 80-unit, 8-AGV, `ca_ssi` run lands
+> at 6–8 tasks/min rather than 18.7). The table is left in place as the historical
+> record; treat it as unverified until the set is re-run. See
+> [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
+
 ![Throughput, latency, travel per task and utilisation at two fleet sizes](assets/readme/policy-comparison.png)
 
 *Error bars 1σ; percentages relative to `random`.*
