@@ -227,6 +227,36 @@ loop with the six-term industrial cost. Both rows are the same code, changed onl
 | Travel per task (m) | 8 AGVs | 12.9 | 10.8 | **−16 %** | −22 % |
 | Near-miss events / run | 8 AGVs | 6.3 | 3.0 | **−53 %** | −55 % |
 
+### Which terms actually matter (ablation)
+
+The six-term cost is only worth its complexity if the terms earn their place, so each one was
+removed on its own — same auction, same seeds, same plant — and the run repeated.
+
+<p align="center">
+  <img src="./assets/readme/ablation.png" width="100%" alt="Leave-one-out ablation: throughput and travel per task for the full CA-SSI cost and for four variants, each with one term removed">
+</p>
+
+| Cost model | Throughput /min | vs full | Travel per task (m) | Mean latency (s) |
+| --- | ---: | ---: | ---: | ---: |
+| **CA-SSI (all six terms)** | **17.45** | — | **11.3** | **17.6** |
+| − dock contention (γ) | 13.92 | **−20 %** | 12.6 | 18.6 |
+| − energy feasibility (δ) | 14.63 | **−16 %** | 12.3 | 18.0 |
+| − load balance (η) | 17.29 | −1 % | 11.6 | 18.0 |
+| − task ageing (ζ) | 17.32 | −1 % | 10.9 | 17.0 |
+
+Two terms carry the model. **Contention is worth 20 % of throughput**: remove it and the
+auction goes back to sending vehicles to stations that are already occupied, which is the
+whole reason this cost function exists. **Energy feasibility is worth 16 %** — less obvious,
+and it survives even at the gentle 0.10 %/m drain used here, because a vehicle that accepts a
+task it cannot finish has to break off and charge, and the task then has to be reassigned.
+
+The other two are honest nulls *on this workload*. Load balance moves nothing measurable,
+which is unsurprising in a 120 s run where no vehicle accumulates a meaningful odometer
+advantage. Ageing also moves nothing — and that is the correct result for an anti-starvation
+term, whose job is to bound the worst case rather than to raise the average. Both are kept,
+because the conditions they protect against (a long shift, a low-priority corner task) are not
+the conditions this experiment creates.
+
 ### What the numbers say
 
 1. **The advantage grows with contention, exactly as the cost model predicts.** With three
@@ -263,8 +293,10 @@ loop with the six-term industrial cost. Both rows are the same code, changed onl
 - `γ` (contention) and `δ` (energy) are hand-tuned for this floor plan. They transfer in
   *kind* — every mill has docking contention — but not in *value*; a new site needs a short
   re-tuning pass, for which `tools/run_experiments.py` is the harness.
-- The energy term is present but barely exercised at 0.10 %/m drain; its contribution is not
-  separately measured here. The contention and ageing terms are what this experiment isolates.
+- The ablation above is a leave-one-out over one workload at one fleet size. It shows which
+  terms carry this plant; it does not establish that the same split holds at another site.
+  Load balance and ageing came out flat here, and both are kept for the conditions this
+  experiment does not create — see the ablation section.
 
 ## Outlook: what this design actually buys
 

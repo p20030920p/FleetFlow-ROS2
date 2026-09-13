@@ -37,7 +37,17 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-POLICIES = ("random", "nearest", "ssi", "ca_ssi", "hungarian")
+# 消融变体：把 CA-SSI 的某一项代价单独置零，用来看"到底哪一项在起作用"。
+# 这是 README 里承诺过、但一直没跑的那组实验。
+ABLATIONS = {
+    "ca_ssi":     {},                    # 完整代价
+    "ca_nocong":  {"W_CONGEST": 0.0},    # 去掉工位拥塞
+    "ca_noener":  {"W_ENERGY": 0.0},     # 去掉电量可达性
+    "ca_nobal":   {"W_BALANCE": 0.0},    # 去掉负载均衡
+    "ca_noage":   {"W_AGE": 0.0},        # 去掉任务老化
+}
+
+POLICIES = ("random", "nearest", "ssi", "hungarian", *ABLATIONS)
 
 # ---------------------------------------------------------------------------
 # ca_ssi 代价权重（单位：等效米）。全部折算成"米"之后各权重的物理含义明确，
@@ -109,7 +119,8 @@ def ca_ssi_cost(task, rx: float, ry: float, *, battery: float = 100.0,
                 odom: float = 0.0, odom_max: float = 1.0,
                 dock_load: Optional[Dict[str, int]] = None,
                 now: float = 0.0, lading: bool = False,
-                drain_per_m: float = DRAIN_PER_M) -> float:
+                drain_per_m: float = DRAIN_PER_M,
+                w: Optional[Dict[str, float]] = None) -> float:
     """单台车执行单个任务的等效代价（单位：米，越小越好）。
 
     六项代价，每一项都对应纺织车间里的一个真实约束：
@@ -129,6 +140,10 @@ def ca_ssi_cost(task, rx: float, ry: float, *, battery: float = 100.0,
     返回的是可直接与其他 (车, 任务) 组合比较的标量。
     """
     dock_load = dock_load or {}
+    W = dict(W_DEADHEAD=W_DEADHEAD, W_LADEN=W_LADEN, W_CONGEST=W_CONGEST,
+             W_ENERGY=W_ENERGY, W_BALANCE=W_BALANCE, W_AGE=W_AGE)
+    if w:
+        W.update(w)
     dx, dy = task.source_x - rx, task.source_y - ry
     d_dead = math.hypot(dx, dy)
     d_laden = math.hypot(task.dest_x - task.source_x, task.dest_y - task.source_y)
@@ -153,19 +168,20 @@ def ca_ssi_cost(task, rx: float, ry: float, *, battery: float = 100.0,
     #    "在同价位里优先照顾等久了的任务"，而不是替整个代价函数做决定。
     age = min(max(0.0, now - getattr(task, "created_at", now)), AGE_CAP)
 
-    return (W_DEADHEAD * d_dead
-            + W_LADEN * (0.0 if lading else d_laden)
-            + W_CONGEST * congest
-            + W_ENERGY * short
-            + W_BALANCE * bal
-            - W_AGE * age
+    return (W["W_DEADHEAD"] * d_dead
+            + W["W_LADEN"] * (0.0 if lading else d_laden)
+            + W["W_CONGEST"] * congest
+            + W["W_ENERGY"] * short
+            + W["W_BALANCE"] * bal
+            - W["W_AGE"] * age
             + 0.02 * task.priority)
 
 
 def pick_ca_ssi(candidates: List, fleet: Dict[int, dict],
                 rng: random.Random,
                 now: float = 0.0,
-                dock_load: Optional[Dict[str, int]] = None
+                dock_load: Optional[Dict[str, int]] = None,
+                w: Optional[Dict[str, float]] = None
                 ) -> Optional[Tuple[int, object]]:
     """拥塞-能耗-负载感知的顺序拍卖，返回本轮的 (robot_id, task)。
 
@@ -188,7 +204,7 @@ def pick_ca_ssi(candidates: List, fleet: Dict[int, dict],
             c = ca_ssi_cost(t, st.get("x", 0.0), st.get("y", 0.0),
                             battery=st.get("battery", 100.0),
                             odom=st.get("odom", 0.0), odom_max=odom_max,
-                            dock_load=dock_load, now=now)
+                            dock_load=dock_load, now=now, w=w)
             key = (round(c, 6), t.priority, t.task_id, rid)
             if best is None or key < best[0]:
                 best = (key, rid, t)
@@ -197,7 +213,8 @@ def pick_ca_ssi(candidates: List, fleet: Dict[int, dict],
 
 def build_cost_matrix(candidates: List, fleet: Dict[int, dict],
                       now: float = 0.0,
-                      dock_load: Optional[Dict[str, int]] = None
+                      dock_load: Optional[Dict[str, int]] = None,
+                      w: Optional[Dict[str, float]] = None
                       ) -> Tuple[List[int], "np.ndarray"]:
     """构造 |R| × |T| 的 ca_ssi 等效代价矩阵，供最优分配器使用。"""
     rids = list(fleet.keys())
@@ -210,7 +227,7 @@ def build_cost_matrix(candidates: List, fleet: Dict[int, dict],
             m[i, j] = ca_ssi_cost(t, st.get("x", 0.0), st.get("y", 0.0),
                                   battery=st.get("battery", 100.0),
                                   odom=st.get("odom", 0.0), odom_max=odom_max,
-                                  dock_load=dock_load, now=now)
+                                  dock_load=dock_load, now=now, w=w)
     return rids, m
 
 
@@ -239,9 +256,17 @@ def pick_hungarian(candidates: List, fleet: Dict[int, dict],
 
 
 # 统一入口：策略名 -> 是否集中式（需要全局车队状态）
-CENTRAL = {"ssi", "ca_ssi", "hungarian"}
+def make_ca_picker(weights: Optional[Dict[str, float]]):
+    """把一组权重绑成一个 picker，签名与其它 picker 一致。"""
+    def _pick(candidates, fleet, rng, now=0.0, dock_load=None):
+        return pick_ca_ssi(candidates, fleet, rng, now=now,
+                           dock_load=dock_load, w=weights)
+    return _pick
+
+
+CENTRAL = {"ssi", "ca_ssi", "hungarian", *ABLATIONS}
 PICKERS = {
     "ssi": pick_ssi,
-    "ca_ssi": pick_ca_ssi,
     "hungarian": pick_hungarian,
+    **{name: make_ca_picker(w) for name, w in ABLATIONS.items()},
 }

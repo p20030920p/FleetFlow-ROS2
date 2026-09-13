@@ -1,0 +1,2 @@
+run_label,policy,num_robots,wall_s,makespan_s,completed,throughput_per_min,latency_mean_s,latency_p50_s,latency_p95_s,utilisation_mean,distance_total_m,traffic_rejected,traffic_expired,min_robot_distance_m,near_miss_events,charging_events,reassignments
+ca_nobal_s1,ca_nobal,8,119.0,117.312,36,18.158,17.791,17.807,28.376,0.709,403.91,0,0,0.483,1,0,0
