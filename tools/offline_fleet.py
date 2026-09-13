@@ -200,7 +200,7 @@ def step_bot(bot, bots, dt=0.1, rng=None, noise=0.0):
 
 def run(n=2, seed=1, ticks=1200, verbose=False, noise=0.0, misalign=0.0,
         same_goal=False, east=False, cone=True, corridor=False,
-        override=True, deadzone=False):
+        override=True, deadzone=False, deadzone_same=True):
     """把 n 台车放在待命排里出发。
 
     `misalign`：出生朝向相对目标方向的随机偏置（弧度上限）。实车里
@@ -221,12 +221,18 @@ def run(n=2, seed=1, ticks=1200, verbose=False, noise=0.0, misalign=0.0,
     # 目标：空筒库的几个泊位（与实车一致，都在西侧）
     if deadzone:
         # 第 36 节的实测现场：两台车都在待命排附近、朝向 +x（东），
-        # 目标是**同一个**取货位 (3.40, 6.00)（在西侧），车心距 0.75 m。
+        # 车心距 0.75 m（车长 0.56 + 2×0.30 pad 几乎正好等于它，
+        # 也就是说这是"贴着安全裕度边缘"的一对车）。
+        #
+        # `deadzone_same` 决定这两台车是抢**同一个**泊位还是去**相邻**两个。
+        # 这一对对照就是用来判定"死区属于派单层还是运动层"的：
+        # 同一泊位卡死、不同泊位顺畅 ⇒ 派单层（重复占用）；
+        # 两者都卡死 ⇒ 运动层（0.75 m 侧向间距过不去）。
         for i, b in enumerate(bots[:2]):
             b.x = 8.16 + 0.69 * i
             b.y = 1.79 - 0.25 * i
             b.yaw = 0.0
-            b.goal = (3.40, 6.00)
+            b.goal = (3.40, 6.00) if deadzone_same else (3.40, 6.00 - 3.0 * i)
             b.yield_target = (b.x, b.y + 0.8)     # 让路点：横向退开
         for b in bots[2:]:
             b.goal = (3.40, 9.00)
@@ -289,6 +295,10 @@ def main() -> int:
     ap.add_argument("--no-override", action="store_true",
                     help="关闭协调层对本地零速的覆盖（对照用）")
     ap.add_argument("--suite", action="store_true", help="跑全部失败场景，给出通过率")
+    ap.add_argument("--deadzone-same", dest="deadzone_same", action="store_true",
+                    default=True, help="死区场景：两车抢同一泊位（默认）")
+    ap.add_argument("--deadzone-diff", dest="deadzone_same", action="store_false",
+                    help="死区场景：两车去相邻两个泊位（对照组）")
     ap.add_argument("--deadzone", action="store_true",
                     help="复现第 36 节：目标同点、两车相距 0.75 m（硬停 0.66 与"
                          "锥形 1.09 之间的死区）")
@@ -306,7 +316,8 @@ def main() -> int:
             ("三车同向鱼贯出库", dict(n=3, east=True, noise=1.0, misalign=3.14)),
             ("三车抢同一泊位", dict(n=3, same_goal=True, noise=1.0, misalign=3.14)),
             ("四车混行（不同目标）", dict(n=4, noise=1.0, misalign=3.14)),
-            ("同泊位 + 0.75m 死区", dict(n=2, deadzone=True)),
+            ("同泊位 + 0.75m 死区", dict(n=2, deadzone=True, deadzone_same=True)),
+            ("异泊位 + 0.75m 死区", dict(n=2, deadzone=True, deadzone_same=False)),
         ]
         seeds = 8
         print(f"离线仲裁套件（override={override}，每场景 {seeds} 个种子，"
@@ -343,7 +354,7 @@ def main() -> int:
                     misalign=args.misalign, same_goal=args.same_goal,
                     east=args.east, cone=not args.no_cone,
                     corridor=args.corridor, override=not args.no_override,
-                    deadzone=args.deadzone)
+                    deadzone=args.deadzone, deadzone_same=args.deadzone_same)
             if r["arrived"] == 0:
                 zero += 1
             print(f"  seed={s:>3}  到达 {r['arrived']}/{r['n']}  "
@@ -356,7 +367,7 @@ def main() -> int:
             misalign=args.misalign, same_goal=args.same_goal,
             east=args.east, cone=not args.no_cone,
             corridor=args.corridor, override=not args.no_override,
-                    deadzone=args.deadzone)
+                    deadzone=args.deadzone, deadzone_same=args.deadzone_same)
     print(f"{args.n} 台车 seed={args.seed}: 到达 {r['arrived']}/{r['n']}，"
           f"{r['ticks']} tick")
     print("分支命中:", dict(sorted(r["tags"].items(), key=lambda kv: -kv[1])))

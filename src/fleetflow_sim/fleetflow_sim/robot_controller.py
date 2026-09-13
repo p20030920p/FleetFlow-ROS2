@@ -135,6 +135,8 @@ class RobotController(Node):
         self.declare_parameter("charge_rate_pct_s", 3.0)
         # 排障开关：把 _avoid 各分支的累计次数打出来。默认关，避免刷屏。
         self.declare_parameter("debug_avoid", False)
+        # 收到工厂撤销时是否真的放手（关掉 = 旧行为，用于消融）
+        self.declare_parameter("cancel_on_factory", True)
         # 排障开关：把"前方有近障碍"的原始 scan 帧写到这个目录（空=关）
         self.declare_parameter("debug_scan_dir", "")
 
@@ -203,6 +205,23 @@ class RobotController(Node):
         # 交通协调层的指令：谁让谁、什么时候停、往哪让。控制器只负责执行。
         self.create_subscription(
             TrafficDirective, f"/{self.ns}/traffic", self.on_traffic, state_qos(10))
+        # ---------------------------------------------------------------
+        # **任务撤销**：工厂把长期无进展的任务判为 failed 之后必须能让车知道。
+        #
+        # 这条订阅是第 40 节那个死区的真正缺口。在此之前控制器只发不收
+        # （pub_failed 在 196 行，却没有任何 /factory/task_status 订阅），
+        # 于是出现这样一条链路：
+        #   车 A 卡住 → 45 s 后工厂回收任务 T、释放工位预定、广播 failed
+        #   → 工厂立刻把**同一个泊位**派给车 B（预定刚被释放，_free_slot 认为空闲）
+        #   → 车 A 从没收到"取消"，仍在朝那个泊位走，或已经停在那里
+        #   → A、B 争同一个点，撞进第 36 节那个 0.75 m 死区。
+        # 这也解释了第 39 节"派单数从 4~5 涨到 10~20、完成数却没动"：
+        # 多出来的派单里有相当一部分指向了**已被占用的泊位**。
+        # 消融开关：关掉就退回"只发不收"的旧行为，用于配对实验，
+        # 确认"撤销收不到"到底贡献了多少重复占用。
+        if bool(self.get_parameter("cancel_on_factory").value):
+            self.create_subscription(
+                TransportTask, "/factory/task_status", self.on_task_status, state_qos(40))
 
         self.cli_task = self.create_client(RequestTask, "/scheduler/request_task")
         self.cli_acquire = self.create_client(AcquireLease, "/traffic/acquire")
@@ -334,6 +353,37 @@ class RobotController(Node):
 
     def on_peer(self, m: RobotStatus):
         self.peers[m.robot_id] = m
+
+    def on_task_status(self, m: TransportTask):
+        """工厂撤销了我手上的任务 —— 必须真的放手。
+
+        只有三种情况会走到这里，且都不是"我自己上报的失败"：
+          * 工厂的陈旧任务回收（stale_task_timeout_s）
+          * 租约/调度层强制释放
+          * 别的进程替这条任务判了失败
+        所以这里**不再 republish failed**（那会绕回自己造成回环），
+        只做三件事：停车、放租约、回到 idle 重新要单。
+
+        为什么停车这一下是关键：任务被回收的瞬间工厂就释放了工位预定，
+        下一个 _free_slot 会把**同一个泊位**再派出去。车若继续朝那个泊位
+        开（或干脆停在那儿），两台车就会在泊位前争一个点 —— 第 36 节的
+        0.75 m 死区就是这么来的。
+        """
+        if m.status not in ("failed", "cancelled"):
+            return
+        if self.task is None or int(m.task_id) != int(self.task.task_id):
+            return
+        # 回声过滤：控制器自己也往这个话题发 failed（_abort_task），会收回来。
+        # 只要 robot_id 就是我，这条失败就是我自己判的，不需要再撤一次。
+        if int(getattr(m, "robot_id", -1)) == int(self.rid):
+            return
+        self.get_logger().warn(
+            f"{self.ns} task {m.task_id} cancelled by factory -> release and re-request")
+        self._release()
+        self.task = None
+        self._yield_active = False
+        self._stop()
+        self._set_state("idle", note="task cancelled")
 
     def on_traffic(self, m: TrafficDirective):
         self._traffic = m

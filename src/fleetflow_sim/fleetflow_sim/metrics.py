@@ -39,7 +39,8 @@ RUN_FIELDS = ["run_label", "policy", "num_robots", "wall_s", "makespan_s", "comp
               "min_robot_distance_m", "near_miss_events", "charging_events", "reassignments",
               # 轮廓净距与真实重叠次数：车心距在密集车队里没有安全含义（两车并排
               # 车心距本来就只有 0.44 m），新增这两列才是可与控制器判据对照的指标。
-              "min_robot_gap_m", "overlap_events"]
+              "min_robot_gap_m", "overlap_events",
+              "dup_target_ticks", "dup_target_events"]
 
 
 class MetricsRecorder(Node):
@@ -74,6 +75,14 @@ class MetricsRecorder(Node):
         self.min_gap = 1e9
         self.overlaps = 0
         self._in_near = set()
+        # --- 重复泊位派单（第 40 节的假设，必须实测而不是推理） ---
+        # 判据：两台车**同时**把 target_x/y 指向同一个点（容差 0.15 m）。
+        # 工厂侧 _free_slot 已经用 reserved 保证一个工位只派一次，所以只要
+        # 这里非零，就说明派单层真的把同一泊位给了两台车。
+        self.dup_target_ticks = 0
+        self.dup_target_events = 0
+        self._dup_key: tuple | None = None
+        self.dup_examples: list[str] = []
         self.traffic_rejected = 0
         self.traffic_expired = 0
         self.charging = 0
@@ -188,6 +197,25 @@ class MetricsRecorder(Node):
                 else:
                     self._in_near.discard(key)
 
+        # 同泊位重复占用：按点分组，任何一组 >1 台车即记一次
+        groups: dict[tuple, list[int]] = {}
+        for rid, r in self.robots.items():
+            if getattr(r, "task_id", -1) == -1:
+                continue
+            tx, ty = float(r.target_x), float(r.target_y)
+            if tx == 0.0 and ty == 0.0:
+                continue            # 无目标时控制器上报 0,0，不是真目标
+            groups.setdefault((round(tx / 0.15), round(ty / 0.15)), []).append(rid)
+        dup = tuple(sorted(tuple(sorted(v)) for v in groups.values() if len(v) > 1))
+        if dup:
+            self.dup_target_ticks += 1
+            if dup != self._dup_key:
+                self.dup_target_events += 1
+                self._dup_key = dup
+                self.get_logger().warn(f"duplicate berth target: {dup}")
+        else:
+            self._dup_key = None
+
     def snapshot(self) -> dict:
         lat = [float(r["latency_s"]) for r in self.rows if r["latency_s"] != ""]
         lat_sorted = sorted(lat)
@@ -214,6 +242,8 @@ class MetricsRecorder(Node):
             near_miss_events=self.near_misses,
             min_robot_gap_m=round(self.min_gap, 3) if self.min_gap < 1e8 else "",
             overlap_events=self.overlaps,
+            dup_target_ticks=self.dup_target_ticks,
+            dup_target_events=self.dup_target_events,
             charging_events=self.charging, reassignments=self.reassign,
         )
 
@@ -226,7 +256,7 @@ class MetricsRecorder(Node):
         self.get_logger().info(
             f"metrics: {snap['completed']} done · makespan={snap['makespan_s']}s · "
             f"throughput={snap['throughput_per_min']}/min · min_gap={snap['min_robot_gap_m']}m · "
-            f"overlaps={snap['overlap_events']}"
+            f"overlaps={snap['overlap_events']} · dup={snap['dup_target_events']}"
         )
 
 

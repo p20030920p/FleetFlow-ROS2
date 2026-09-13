@@ -71,6 +71,7 @@ def _robots(context, *args, **kwargs):
                                   debug_scan_dir=LaunchConfiguration("debug_scan_dir").perform(context),
                                   start_stagger_s=float(LaunchConfiguration("start_stagger").perform(context)),
                                   avoid_cones=LaunchConfiguration("avoid_cones").perform(context).lower() == "true",
+                                  cancel_on_factory=LaunchConfiguration("cancel_on_factory").perform(context).lower() == "true",
                                  use_sim_time=use_sim_time)],
             )
         )
@@ -200,6 +201,7 @@ def generate_launch_description():
                               description="gap=按净距最大化脱困（默认）；legacy=旧行为（对照用）"),
         DeclareLaunchArgument("collision_criterion", default_value="outline",
                               description="outline=轮廓净距（默认）；centre=旧车心距判据（对照实验用）"),
+        DeclareLaunchArgument("cancel_on_factory", default_value="true"),
         DeclareLaunchArgument("avoid_cones", default_value="false",
                               description="开启控制器本地前方锥形互让（默认关，交给协调层）"),
         DeclareLaunchArgument("start_stagger", default_value="0.0",
