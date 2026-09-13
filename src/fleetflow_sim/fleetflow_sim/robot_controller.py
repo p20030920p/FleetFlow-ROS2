@@ -77,6 +77,9 @@ class RobotController(Node):
         self.declare_parameter("stuck_timeout_s", 10.0)
         # 电量
         self.declare_parameter("battery_drain_per_m", 0.55)
+        # 车体几何：LiDAR 安装点相对车体中心的纵向偏移，用于逐角度屏蔽自身回波
+        self.hull_len, self.hull_wid, self.lidar_dx = 0.56, 0.44, 0.18
+        self.declare_parameter("scan_self_mask_m", 0.06)
         self.declare_parameter("battery_low_pct", 30.0)
         self.declare_parameter("battery_resume_pct", 88.0)
         self.declare_parameter("charge_rate_pct_s", 3.0)
@@ -148,14 +151,63 @@ class RobotController(Node):
         self.x, self.y = p.x + self.x0, p.y + self.y0     # odom 相对出生点
         self.yaw = yaw_from_quat(m.pose.pose.orientation) + self.yaw0
 
+    def _self_range(self, ang: float) -> float:
+        """从雷达到**车体轮廓**在给定方向上的距离（车体系，前方为 +x）。
+
+        为什么要算这个：LiDAR 装在车头 (x=+0.18)，而车体是 0.56×0.44 的矩形，
+        所以它的两条前角在 ±66°、约 0.24 m 处 —— 正好落在前向安全扇区里。
+        实测中这一对**对称的自身回波**让车永久停在原地（v=0 → 看门狗判卡死 →
+        放弃任务 → 全线停摆）。真实 AGV 的做法是按轮廓逐角度屏蔽自身回波，
+        而不是拍一个常数距离：常数要么漏（屏蔽不掉车尾）、要么瞎（把真障碍也屏蔽了）。
+        """
+        # 车体矩形（车体系）与雷达安装点
+        hx, hy = self.hull_len / 2.0, self.hull_wid / 2.0
+        lx = self.lidar_dx
+        dx, dy = math.cos(ang), math.sin(ang)
+        best = float("inf")
+        # 与四条边求交，取最近的正向交点
+        for wall_x in (-hx, hx):
+            if abs(dx) > 1e-9:
+                t = (wall_x - lx) / dx
+                y = dy * t
+                if t > 0 and -hy - 1e-9 <= y <= hy + 1e-9:
+                    best = min(best, t)
+        for wall_y in (-hy, hy):
+            if abs(dy) > 1e-9:
+                t = (wall_y - 0.0) / dy
+                x = lx + dx * t
+                if t > 0 and -hx - 1e-9 <= x <= hx + 1e-9:
+                    best = min(best, t)
+        return 0.0 if best == float("inf") else best
+
     def on_scan(self, m: LaserScan):
-        """只关心前向扇区的最小距离，作为最后一道安全闸。"""
+        """只关心前向扇区的最小距离，作为最后一道安全闸。
+
+        两处必须做对，否则会变成"永远停住"而不是"安全"：
+
+        1. **忽略物理上不可能的近距离回波。** 车体半宽 0.22 m、全长 0.56 m，
+           LiDAR 又装在车头往前 0.18 m 处，所以任何**外部**物体都不可能出现在
+           距雷达 0.24 m 以内而不已经嵌进车体里。实测中反复出现 0.15 m 的回波
+           （量程下限 0.12 m，能通过 range_min 过滤），它把车钉死在原地：
+           看门狗判定卡死 → 重规划 → 仍卡死 → 放弃任务 → 全线停摆。
+        2. **只看运动方向。** 侧后方的近距离物体不该让一台正在直行的车停下，
+           那是车车互让锥形区的职责。
+        """
         if not m.ranges:
             return
         n = len(m.ranges)
         half = max(1, int(n * 0.11))                      # 约 ±40°
         lo, hi = n // 2 - half, n // 2 + half
-        front = [r for r in m.ranges[lo:hi] if m.range_min < r < m.range_max]
+        margin = float(self.get_parameter("scan_self_mask_m").value)
+        rmin = float(m.range_min)
+        front = []
+        for i in range(lo, hi):
+            r = m.ranges[i]
+            if not (rmin < r < m.range_max):
+                continue
+            ang = m.angle_min + i * m.angle_increment
+            if r > self._self_range(ang) + margin:        # 自身轮廓以外的才算障碍
+                front.append(r)
         self._scan_min = min(front) if front else 99.0
 
     def on_peer(self, m: RobotStatus):
@@ -408,15 +460,17 @@ class RobotController(Node):
             self._lease_renew_t = now
             self._request_lease(self.held)
 
-        # 周期性重规划：出发时算好的路径会随着同伴移动而失效，
-        # 真实系统也是按固定频率重规划，而不是只在卡死时才重算。
-        if now - getattr(self, "_last_replan_t", 0.0) > 3.0:
+        # 重规划：只在**路径真的被占住**时才重算。
+        # 曾经是每 3 秒无条件重算一次，结果是纯追踪的路径被反复重置：
+        # 车刚开始转向就被打断，于是永远在原地来回摆，一步也走不出去。
+        if (now - getattr(self, "_last_replan_t", 0.0) > 1.0
+                and self._path_blocked_by_peer()):
             self._last_replan_t = now
             tx, ty = self._target_xy()
-            if tx is not None and self.pursuit.remaining() > 0.8:
+            if tx is not None:
                 self._go_to(tx, ty, self.state, reset_strikes=False)
 
-        v, w = self._avoid(v, w)
+        v, w = self._avoid(v, w, now)
         self._watchdog(now)
         self._v_last = v
         cmd = Twist()
@@ -429,6 +483,26 @@ class RobotController(Node):
             self.yaw += w * dt
             self.battery = max(0.0, self.battery - abs(v) * dt * float(
                 self.get_parameter("battery_drain_per_m").value))
+
+    def _path_blocked_by_peer(self, horizon: float = 2.2) -> bool:
+        """剩余路径的前 horizon 米内是否有同伴占位。"""
+        rest = self.pursuit.remaining_path()
+        if not rest:
+            return False
+        pts, acc, prev = [], 0.0, (self.x, self.y)
+        for q in rest:
+            acc += math.hypot(q[0] - prev[0], q[1] - prev[1])
+            prev = q
+            pts.append(q)
+            if acc > horizon:
+                break
+        for p in self.peers.values():
+            if p.robot_id == self.rid:
+                continue
+            for q in pts:
+                if math.hypot(q[0] - p.x, q[1] - p.y) < 0.75:
+                    return True
+        return False
 
     def _target_xy(self):
         if self.state == "to_pickup" and self.task:
@@ -455,7 +529,7 @@ class RobotController(Node):
             return False
         return math.hypot(tx - self.x, ty - self.y) < 0.20
 
-    def _avoid(self, v: float, w: float):
+    def _avoid(self, v: float, w: float, now: float = 0.0):
         """车车互让 + LiDAR 安全层。"""
         slow = float(self.get_parameter("avoid_slow_m").value)
         stop = float(self.get_parameter("avoid_stop_m").value)
@@ -467,6 +541,9 @@ class RobotController(Node):
         scan_stop = float(self.get_parameter("scan_stop_m").value)
         if self._docking():
             scan_stop = min(scan_stop, 0.12)
+        if now < getattr(self, "_creep_until", 0.0):
+            scan_stop = min(scan_stop, 0.14)
+            v = min(v, 0.16)
         if self._scan_min < scan_stop and v > 0.0:
             self.yields += 1
             return 0.0, w * 0.3
@@ -521,6 +598,12 @@ class RobotController(Node):
             f"{ty if ty is None else round(ty,2)}) nearest_peer={nearest[1]}@{nearest[0]:.2f}m "
             f"scan_min={self._scan_min:.2f} v_last={getattr(self,'_v_last',0):.2f} "
             f"pursuit_idx={self.pursuit.idx}/{len(self.pursuit.path)}")
+        # 第二次卡死时进入爬行：把急停阈值压到最低，用极低速试走一小段。
+        # 真实产线上，一次未被证实的近距离回波不该让整条线停下来，
+        # 而应当降级为"慢速通过 + 记录"，只有真的走不动才放弃任务。
+        if self._stuck_strikes == 2:
+            self._creep_until = now + 6.0
+            self.get_logger().warn(f"{self.ns}: stalled twice, creeping to clear it")
         if self._stuck_strikes < 3 and tx is not None:
             self.replans += 1
             self.get_logger().warn(f"{self.ns}: stalled, re-planning")

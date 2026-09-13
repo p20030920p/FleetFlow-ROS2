@@ -32,11 +32,20 @@ def mat(rgb, a=1.0, rough=0.65, metal=0.0):
             f"</metal></pbr></material>")
 
 
-def box(name, cx, cy, cz, sx, sy, sz, rgb, **kw):
+def box(name, cx, cy, cz, sx, sy, sz, rgb, visual_only: bool = False, **kw):
+    """一个静态盒体。
+
+    ``visual_only=True`` 只出视觉、不出碰撞 —— **地面标线必须这样**。
+    标线只有 1~2 cm 厚，却带碰撞体；AGV 出生时轮底在 z=0.01，正好陷进
+    2 cm 厚的待命区垫板里，于是被物理卡住：能原地打转，不能平移。
+    实测中这让整条线在 Gazebo 下几乎不产出。
+    """
+    col = ("" if visual_only else
+           f'<collision name="c"><geometry><box><size>{sx:.3f} {sy:.3f} {sz:.3f}</size></box>'
+           f'</geometry></collision>')
     return (f'<model name="{name}"><static>true</static><pose>{cx:.3f} {cy:.3f} {cz:.3f} 0 0 0</pose>'
-            f'<link name="l"><collision name="c"><geometry><box><size>{sx:.3f} {sy:.3f} {sz:.3f}</size></box>'
-            f'</geometry></collision><visual name="v"><geometry><box><size>{sx:.3f} {sy:.3f} {sz:.3f}</size>'
-            f'</box></geometry>{mat(rgb, **kw)}</visual></link></model>')
+            f'<link name="l">{col}<visual name="v"><geometry><box><size>{sx:.3f} {sy:.3f} {sz:.3f}</size></box>'
+            f'</geometry>{mat(rgb, **kw)}</visual></link></model>')
 
 
 def cyl(name, cx, cy, cz, r, h, rgb, rot=(0, 0, 0), **kw):
@@ -142,41 +151,41 @@ def markings():
             x1 = s["done_x"] + 0.95
             for sy in (-0.90, 0.90):
                 add(box(f"line_{s['name']}_{lane}_{'a' if sy < 0 else 'b'}",
-                        (x0 + x1) / 2, lane + sy, 0.012, x1 - x0, 0.10, 0.02, (0.92, 0.80, 0.10)))
+                        (x0 + x1) / 2, lane + sy, 0.012, x1 - x0, 0.10, 0.02, (0.92, 0.80, 0.10), visual_only=True))
     # 混凝土地坪伸缩缝（每 6 m 一道，真实车间地面就有）
     for i in range(1, 5):
-        add(box(f"joint_x_{i}", i * 6.0, 8.0, 0.010, 0.06, 15.6, 0.016, (0.52, 0.53, 0.54)))
+        add(box(f"joint_x_{i}", i * 6.0, 8.0, 0.010, 0.06, 15.6, 0.016, (0.52, 0.53, 0.54), visual_only=True))
     for j in range(1, 3):
-        add(box(f"joint_y_{j}", 13.0, j * 5.5, 0.010, 25.6, 0.06, 0.016, (0.52, 0.53, 0.54)))
+        add(box(f"joint_y_{j}", 13.0, j * 5.5, 0.010, 25.6, 0.06, 0.016, (0.52, 0.53, 0.54), visual_only=True))
     # 参观/物流通道（浅色环氧地坪带）
     for j, (y0, w) in enumerate([(7.30, 1.40)]):
-        add(box(f"walkway_{j}", 13.0, y0, 0.008, 25.0, w, 0.014, (0.66, 0.67, 0.66), rough=0.88))
+        add(box(f"walkway_{j}", 13.0, y0, 0.008, 25.0, w, 0.014, (0.66, 0.67, 0.66), rough=0.88, visual_only=True))
 
     # 主通道中心虚线
     for i in range(17):
-        add(box(f"dash_{i}", 1.8 + i * 1.45, 8.0, 0.012, 0.70, 0.09, 0.02, (0.90, 0.90, 0.86)))
+        add(box(f"dash_{i}", 1.8 + i * 1.45, 8.0, 0.012, 0.70, 0.09, 0.02, (0.90, 0.90, 0.86), visual_only=True))
     # 取放位标记：每个泊位一个环
     for name, pt in L.STORAGE_SLOT_POINTS.items():
         col = (0.22, 0.68, 0.38) if "empty" in name else (0.80, 0.26, 0.28)
         for k in range(8):
             a0 = 2 * math.pi * k / 8
             add(box(f"slot_{name}_{k}", pt["x"] + 0.40 * math.cos(a0), pt["y"] + 0.40 * math.sin(a0),
-                    0.012, 0.16, 0.10, 0.02, col))
+                    0.012, 0.16, 0.10, 0.02, col, visual_only=True))
     # 泊位间的斑马警示带
     for zone, spec in L.STORAGE_SLOTS.items():
         for i, y in enumerate(spec["ys"]):
             for k in range(3):
                 add(box(f"hz_{zone}_{i}_{k}", spec["x"] - 0.62 - k * 0.28, y, 0.012,
-                        0.16, 1.05, 0.02, (0.95, 0.82, 0.10) if k % 2 == 0 else (0.15, 0.15, 0.16)))
+                        0.16, 1.05, 0.02, (0.95, 0.82, 0.10) if k % 2 == 0 else (0.15, 0.15, 0.16), visual_only=True))
     # 待命区方框
     p0 = L.PARK["x0"] - 0.75
     p1 = L.PARK["x0"] + L.PARK["dx"] * (L.PARK["n"] - 1) + 0.75
     for sy in (-0.72, 0.72):
         add(box(f"park_line_{'a' if sy < 0 else 'b'}", (p0 + p1) / 2, L.PARK["y"] + sy,
-                0.012, p1 - p0, 0.08, 0.02, (0.94, 0.94, 0.92)))
+                0.012, p1 - p0, 0.08, 0.02, (0.94, 0.94, 0.92), visual_only=True))
     for i in range(L.PARK["n"] + 1):
         add(box(f"park_tick_{i}", p0 + i * L.PARK["dx"], L.PARK["y"], 0.012, 0.08, 1.44, 0.02,
-                (0.94, 0.94, 0.92)))
+                (0.94, 0.94, 0.92), visual_only=True))
 
 
 # ------------------------------------------------------------------ 机器
@@ -288,7 +297,8 @@ def charger(name, spec):
 
 def park_bay():
     for i, (x, y, _) in enumerate(L.park_poses(8)):
-        add(box(f"park_pad_{i}", x, y, 0.014, 0.92, 0.72, 0.02, (0.62, 0.63, 0.64), rough=0.9))
+        add(box(f"park_pad_{i}", x, y, 0.014, 0.92, 0.72, 0.02, (0.62, 0.63, 0.64),
+                rough=0.9, visual_only=True))
 
 
 def control_room():

@@ -183,10 +183,26 @@ raising the average. Both are kept; neither is claimed to pay for itself here.
 
 ## Stability
 
-From a Gazebo run with 4 AGVs over 200 s of wall clock: **35 tasks dispatched, 5 delivered,
-0 errors, 0 watchdog aborts, 0 "no path", free memory never below 6.9 GB.** Under software
-rendering Gazebo runs about five times slower than real time, which is why the timing study uses
-`logic_only.launch.py` — same coordination stack, wall-clock accurate.
+What keeps the line running, and what was measured:
+
+| Mechanism | Purpose |
+| --- | --- |
+| **Leases with TTL** | One holder per station, no hold-and-wait, reclaimed if a vehicle dies holding one. |
+| **Watchdog + re-plan** | No progress for 10 s → re-plan; second strike → creep at low speed; third → abandon and re-queue. |
+| **Docking mode** | Inside 0.8 m of the target the LiDAR stop drops to 0.12 m, so the emergency stop can never be larger than the arrival tolerance. |
+| **Hull self-mask** | LiDAR returns are compared against the vehicle's own outline angle by angle; its front corners otherwise sit in the stop sector at 0.24 m. |
+| **Event-driven re-planning** | Only when a peer actually occupies the next 2.2 m of the path — re-planning on a timer resets the controller mid-turn and the vehicle oscillates in place. |
+
+Measured with 4 AGVs over 200 s of wall clock, before the dock and marking fixes:
+**35 tasks dispatched, 5 delivered, 0 errors, 0 watchdog aborts, 0 "no path", free memory never
+below 6.9 GB.**
+
+**What is not yet trustworthy.** Under Gazebo the vehicles do not reproduce commanded motion:
+with `cmd_vel` held directly at 0.5 m/s for 15 s the chassis advances 0.17 m instead of 7.5 m.
+The coordination stack commands correctly — 93 % of published commands are non-zero at a mean
+of 0.30 m/s — so the fault is in the wheel/ground contact model, and it is why the timing study
+runs on `logic_only.launch.py`. It is stated here rather than hidden because it is the honest
+state of the repository: the allocation result is solid, the physical repeatability is not.
 
 ## Outlook
 
