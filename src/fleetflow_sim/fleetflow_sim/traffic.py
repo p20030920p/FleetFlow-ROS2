@@ -50,14 +50,17 @@ HULL_WID = 0.44
 # 轮廓外扩多少仍算"要撞了"。带余量的矩形一旦相交就是硬停。
 AVOID_MARGIN = 0.05
 
-# 间隙阈值（米）：**两车轮廓之间的净距**，不是车心距。
-# 这是本次修掉的核心问题：原来用 1.5 m 车心距做减速检测，而 8 台车在
-# 26×16 m 的厂房里几乎永远有同伴在 1.5 m 内 —— 结果全队被钉在
-# speed_scale≈0.3，实测指令速度中位数只有 0.135 m/s（上限 0.85）。
-# 换成"轮廓净距"之后，只有真的快要贴上才会减速，正常并排/跟车不再互相压制。
-COLLISION_CHECK_GAP = 0.45          # 净距小于此值开始分级减速
-HARD_SAFETY_GAP = 0.06               # 净距小于此值视为已贴上 -> 停
-CRITICAL_SAFETY_GAP = -0.02          # 轮廓已重叠 -> 紧急后退
+# 间隙阈值（米）：**两车真实轮廓之间的净距**，也就是 closest_gap() 现在返回的量。
+#
+# 这里必须把"量"讲清楚，因为写错过一次：closest_gap() 早期拿**外扩过
+# AVOID_MARGIN 的轮廓**算距离，而阈值是按真实净距标定的，两者恒差
+# 2*AVOID_MARGIN = 0.10 m。后果是车心距 0.80 m（真实净距 0.24 m，根本碰不到）
+# 被判成 0.14 m 开始减速，0.70 m（真实净距 0.14 m）直接硬停。
+# 更糟的是 metrics 报的是真实净距，两个模块对同一对车给出不同的数，无法互证。
+# 现在统一：closest_gap() 用裸轮廓，下面这些阈值就是真实净距。
+COLLISION_CHECK_GAP = 0.35           # 真实净距小于此值开始分级减速
+HARD_SAFETY_GAP = 0.10               # 真实净距小于此值视为已贴上 -> 停
+CRITICAL_SAFETY_GAP = 0.0            # 真实净距为负（轮廓真重叠）-> 紧急脱离
 COLLISION_ESCAPE_BLOCK_DISTANCE = 0.45   # 脱困时"旁边有车"的车心距判据（沿用 ROS1）
 # 兼容旧名：脱困与让路逻辑里仍按"车心距"表示"旁边很近"
 HARD_SAFETY_DISTANCE = 0.25
@@ -895,10 +898,17 @@ class TrafficLayer:
         return 0.0, self.choose_escape_rotation(rid)
 
     def closest_gap(self, rid):
-        """最近同伴及其与我的**轮廓净距**（米）。"""
+        """最近同伴及其与我的**真实轮廓净距**（米）。
+
+        用**裸轮廓**（不加 AVOID_MARGIN），这样返回值与
+        `metrics.min_robot_gap_m` 是同一个量，也和下面那些阈值同一单位。
+        AVOID_MARGIN 只属于控制器里那层"带余量就算撞上"的硬判据，
+        不该混进几何距离本身 —— 混进来过一次，导致两个模块对同一对车
+        报出相差 0.10 m 的两个数。
+        """
         if rid not in self.pos:
             return None, float("inf")
-        hx, hy = HULL_LEN / 2 + AVOID_MARGIN, HULL_WID / 2 + AVOID_MARGIN
+        hx, hy = HULL_LEN / 2, HULL_WID / 2
         me = obb_corners(*self.pos[rid], self.yaw.get(rid, 0.0), hx, hy)
         best, bg = None, float("inf")
         for oid, op in self.pos.items():
@@ -944,7 +954,7 @@ class TrafficLayer:
             return True, 0.0, True
         if gap < HARD_SAFETY_GAP:
             return True, 0.0, False
-        # 净距 0.06~0.45 m 之间线性降速：0.45 -> 1.0，0.06 -> 0.35
+        # 真实净距 0.10~0.35 m 之间线性降速：0.35 -> 1.0，0.10 -> 0.35
         fac = 0.35 + 0.65 * (gap - HARD_SAFETY_GAP) / (COLLISION_CHECK_GAP - HARD_SAFETY_GAP)
         return True, max(0.0, min(1.0, fac)), False
 
