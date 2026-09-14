@@ -29,14 +29,22 @@ import subprocess
 import sys
 import time
 
-RUN_FIELDS = ["run_label", "policy", "num_robots", "wall_s", "makespan_s", "completed",
-              "throughput_per_min", "latency_mean_s", "latency_p50_s", "latency_p95_s",
-              "utilisation_mean", "distance_total_m", "traffic_rejected", "traffic_expired",
-              "min_robot_distance_m", "near_miss_events", "charging_events", "reassignments",
-              # 轮廓净距与真实重叠次数（metrics.py 用有向矩形判据算出的安全指标）。
-              # 必须与 metrics.RUN_FIELDS 同步，否则汇总时报
-              # "dict contains fields not in fieldnames"。
-              "min_robot_gap_m", "overlap_events"]
+# 字段表**从 metrics 导入**，不再手抄一份。
+#
+# 手抄过两次，两次都漏了：metrics.RUN_FIELDS 一加新列，这里的副本没跟上，
+# 汇总时就报 `ValueError: dict contains fields not in fieldnames:
+# 'dup_target_ticks', 'dup_target_events'` —— 而且是在**所有运行都跑完之后**
+# 才炸，白等一整轮。直接从源头导入，这个漂移就不可能再发生。
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "src", "fleetflow_sim"))
+try:
+    from fleetflow_sim.metrics import RUN_FIELDS            # noqa: E402
+except Exception as _exc:                                   # noqa: BLE001
+    # 没 source 工作区时 fleetflow_interfaces 导入不了。这时宁可**直接报错**，
+    # 也不要退回一份手抄的字段表 —— 那正是导致本轮白跑一整轮的原因。
+    raise SystemExit(
+        "无法从 fleetflow_sim.metrics 导入 RUN_FIELDS（" + str(_exc) + "）。\n"
+        "请先 source /opt/ros/jazzy/setup.bash 与本工作区的 install/setup.bash。")
 
 
 def run_once(policy: str, seed: int, seconds: int, robots: int, out_root: str,

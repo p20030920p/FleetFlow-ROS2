@@ -49,7 +49,7 @@ class TrafficManager(Node):
         self.declare_parameter("lease_ttl_s", 120.0)
         self.declare_parameter("max_wait_s", 45.0)
         self.declare_parameter("rate_hz", 10.0)
-        self.declare_parameter("num_robots", 8)
+        self.declare_parameter("num_robots", 4)
         # 碰撞判据开关，**只为对照实验**保留：
         #   outline（默认）= 两车轮廓净距，与控制器一致
         #   centre        = 旧的车心距判据（1.5 m 起减速），存档对照用

@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import statistics
+import sys
 from collections import defaultdict
 
 import matplotlib
@@ -82,19 +83,41 @@ def derive(rows):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("saturated")
-    ap.add_argument("slack")
-    ap.add_argument("out")
+    ap.add_argument("saturated", nargs="?", help="小车队工况 summary.csv")
+    ap.add_argument("slack", nargs="?", help="大车队工况 summary.csv")
+    ap.add_argument("out", nargs="?", help="输出 PNG")
+    ap.add_argument("--group", action="append", default=[],
+                    metavar="LABEL=SUMMARY.CSV",
+                    help="可变组数：可重复给出，行按给出顺序排列。"
+                         "给了 --group 就忽略位置参数。")
     args = ap.parse_args()
 
-    conds = [
-        ("工况 A · 小车队  SMALL FLEET  ·  3 AGVs  ·  利用率 ≈ 0.98",
-         derive(load(args.saturated)),
-         "对接位竞争少 —— 策略之间有差距，但不大"),
-        ("工况 B · 大车队  LARGE FLEET  ·  8 AGVs  ·  利用率 ≈ 0.73",
-         derive(load(args.slack)),
-         "对接位竞争激烈 —— 拥塞感知的收益被放大"),
-    ]
+    if args.group:
+        # 可变组数：每组一行。车队规模从该组数据里读，标题自动生成。
+        conds = []
+        for item in args.group:
+            if "=" not in item:
+                print(f"--group 需要 LABEL=FILE 形式，收到 {item!r}", file=sys.stderr)
+                return 2
+            label, path = item.split("=", 1)
+            rows = load(path)
+            data = derive(rows)
+            n_robots = rows[0].get("num_robots", "?") if rows else "?"
+            util = data.get("ca_ssi", data.get("random", {})).get(
+                "utilisation_mean", (0.0,))[0]
+            conds.append((f"{label}  ·  {n_robots} AGVs  ·  利用率 ≈ {util:.2f}",
+                          data, ""))
+    elif args.saturated and args.slack and args.out:
+        conds = [
+            ("工况 A · 小车队  SMALL FLEET  ·  3 AGVs  ·  利用率 ≈ 0.98",
+             derive(load(args.saturated)),
+             "对接位竞争少 —— 策略之间有差距，但不大"),
+            ("工况 B · 大车队  LARGE FLEET  ·  8 AGVs  ·  利用率 ≈ 0.73",
+             derive(load(args.slack)),
+             "对接位竞争激烈 —— 拥塞感知的收益被放大"),
+        ]
+    else:
+        ap.error("要么给 --group，要么给 saturated slack out 三个位置参数")
 
     plt.rcParams.update({
         "font.family": "sans-serif",
@@ -103,7 +126,9 @@ def main() -> int:
         "axes.edgecolor": RULE, "axes.labelcolor": INK, "text.color": INK,
         "xtick.color": INK, "ytick.color": MUTED,
     })
-    fig, axes = plt.subplots(2, 4, figsize=(16.0, 8.6), dpi=100)
+    nrow = len(conds)
+    fig, axes = plt.subplots(nrow, 4, figsize=(16.0, 4.3 * nrow + 0.4), dpi=100,
+                             squeeze=False)
     fig.patch.set_facecolor(BG)
 
     for row, (title, data, note) in enumerate(conds):
@@ -144,8 +169,9 @@ def main() -> int:
         axes[row][0].text(0.0, 1.30, title, transform=axes[row][0].transAxes,
                           fontsize=10.6, fontweight="bold", color=INK,
                           ha="left", va="bottom")
-        axes[row][0].text(0.0, 1.185, note, transform=axes[row][0].transAxes,
-                          fontsize=9.0, color=MUTED, ha="left", va="bottom")
+        if note:
+            axes[row][0].text(0.0, 1.185, note, transform=axes[row][0].transAxes,
+                              fontsize=9.0, color=MUTED, ha="left", va="bottom")
 
     fig.suptitle("任务分配策略对比 · Task-allocation policy comparison",
                  fontsize=15, fontweight="bold", color=INK, x=0.010,

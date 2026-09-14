@@ -6,7 +6,7 @@
 * 跑分配策略对比实验：Gazebo 渲染一帧的成本远高于调度本身，
   做 3 组 × 多轮对比时用它可以把单轮时间从分钟级压到几十秒
 
-    ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi \\
+    ros2 launch fleetflow_sim logic_only.launch.py num_robots:=4 policy:=ssi \\
         seconds:=120 out_dir:=/tmp/exp_ssi
 """
 from __future__ import annotations
@@ -76,7 +76,7 @@ Node(package=PKG, executable="factory_manager", name="factory_manager", output="
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument("num_robots", default_value="8"),
+        DeclareLaunchArgument("num_robots", default_value="4"),
         DeclareLaunchArgument("max_tasks_in_flight", default_value="6"),
         DeclareLaunchArgument("num_materials", default_value="12"),
         DeclareLaunchArgument("stuck_timeout", default_value="10.0"),
