@@ -78,7 +78,11 @@ class FactoryManager(Node):
         # 投料 / 推进的派单优先级（第 55 节）。
         #   True（默认）= 先推进完工位，再投料新桶
         #   False        = 旧行为，先投料（实测会把在途额度吃满，饿死推进）
-        self.declare_parameter("advance_first", True)
+        # 默认 False = 保留**旧顺序**（先投料、后推进）。
+        # 第 56 节的 600 s 配对实验里，改成"先推进"反而更差
+        # （成品 2.33 vs 5.67 件/600 s），所以改回默认旧行为，
+        # 参数保留以便复现那组测量。
+        self.declare_parameter("advance_first", False)
 
         self.stations: dict[str, Station] = {}
         for key, z in layout.STORAGE.items():

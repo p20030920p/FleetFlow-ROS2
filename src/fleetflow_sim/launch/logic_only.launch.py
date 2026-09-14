@@ -80,7 +80,7 @@ def generate_launch_description():
         DeclareLaunchArgument("stuck_timeout", default_value="10.0"),
         DeclareLaunchArgument("battery_drain", default_value="0.55"),
         DeclareLaunchArgument("cancel_on_factory", default_value="true"),
-        DeclareLaunchArgument("advance_first", default_value="true",
+        DeclareLaunchArgument("advance_first", default_value="false",
                               description="先推进完工位再投料（false = 旧顺序）"),
         DeclareLaunchArgument("empty_slots", default_value="4",
                               description="空筒取放位数量（= 喂料并发上限），4~8"),
