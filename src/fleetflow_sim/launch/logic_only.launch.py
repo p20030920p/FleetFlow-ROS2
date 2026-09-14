@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import SetEnvironmentVariable, DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -33,7 +33,9 @@ def _spawn(context, *args, **kwargs):
     no_dash = LaunchConfiguration("dashboard").perform(context).lower() == "true"
 
     actions = [
-        Node(package=PKG, executable="factory_manager", name="factory_manager", output="screen",
+                SetEnvironmentVariable("FLEETFLOW_EMPTY_SLOTS",
+                               LaunchConfiguration("empty_slots")),
+Node(package=PKG, executable="factory_manager", name="factory_manager", output="screen",
              parameters=[dict(num_materials=materials,
                               stale_task_timeout_s=float(LaunchConfiguration("stale_task_timeout").perform(context)),
                               max_tasks_in_flight=int(LaunchConfiguration("max_tasks_in_flight").perform(context)))]),
@@ -77,6 +79,8 @@ def generate_launch_description():
         DeclareLaunchArgument("stuck_timeout", default_value="10.0"),
         DeclareLaunchArgument("battery_drain", default_value="0.55"),
         DeclareLaunchArgument("cancel_on_factory", default_value="true"),
+        DeclareLaunchArgument("empty_slots", default_value="4",
+                              description="空筒取放位数量（= 喂料并发上限），4~8"),
         DeclareLaunchArgument("escape_election", default_value="true"),
         DeclareLaunchArgument("stall_horizon", default_value="8.0"),
         DeclareLaunchArgument("true_speed_report", default_value="true"),

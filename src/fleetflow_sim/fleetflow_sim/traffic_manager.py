@@ -242,6 +242,7 @@ class TrafficManager(Node):
 def main():
     from rclpy.executors import ExternalShutdownException
 
+    layout.bootstrap()      # 先定布局，再建节点
     rclpy.init()
     node = TrafficManager()
     try:

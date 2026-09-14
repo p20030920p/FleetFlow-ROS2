@@ -417,6 +417,7 @@ class FactoryManager(Node):
 
 
 def main():
+    layout.bootstrap()      # 先定布局，再建节点
     rclpy.init()
     node = FactoryManager()
     try:

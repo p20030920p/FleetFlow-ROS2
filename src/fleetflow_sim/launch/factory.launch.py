@@ -16,7 +16,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
+from launch.actions import SetEnvironmentVariable, DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
 from launch.conditions import IfCondition, LaunchConfigurationEquals  # noqa: F401
 from launch.conditions import IfCondition
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
@@ -152,6 +152,9 @@ def generate_launch_description():
 
     use_sim_time = LaunchConfiguration("use_sim_time")
     core = [
+        # 必须在节点构造前设好：布局（取放位）是模块级数据，节点构造时就被读走
+        SetEnvironmentVariable("FLEETFLOW_EMPTY_SLOTS",
+                               LaunchConfiguration("empty_slots")),
         Node(package=PKG, executable="factory_manager", name="factory_manager", output="screen",
              parameters=[dict(num_materials=LaunchConfiguration("num_materials"),
                               max_tasks_in_flight=LaunchConfiguration("max_tasks_in_flight"),
@@ -207,6 +210,8 @@ def generate_launch_description():
         DeclareLaunchArgument("collision_criterion", default_value="outline",
                               description="outline=轮廓净距（默认）；centre=旧车心距判据（对照实验用）"),
         DeclareLaunchArgument("cancel_on_factory", default_value="true"),
+        DeclareLaunchArgument("empty_slots", default_value="4",
+                              description="空筒取放位数量（= 喂料并发上限），4~8"),
         DeclareLaunchArgument("escape_election", default_value="true"),
         DeclareLaunchArgument("stall_horizon", default_value="8.0"),
         DeclareLaunchArgument("true_speed_report", default_value="true"),

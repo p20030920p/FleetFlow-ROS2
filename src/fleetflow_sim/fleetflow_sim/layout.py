@@ -104,6 +104,47 @@ STORAGE_SLOT_POINTS = {
 }
 
 
+def _rebuild_slot_points():
+    STORAGE_SLOT_POINTS.clear()
+    for zone, spec in STORAGE_SLOTS.items():
+        for i, y in enumerate(spec["ys"]):
+            name = f"storage_{zone}_slot_{i}"
+            STORAGE_SLOT_POINTS[name] = dict(name=name, x=spec["x"], y=y)
+
+
+def set_empty_slots(n: int) -> int:
+    """改空筒取放位数量，重建 STORAGE_SLOT_POINTS，返回实际生效的数量。
+
+    必须在**任何节点构造之前**调用：`STORAGE_SLOT_POINTS` 是模块级字典，
+    `factory_manager` / `dashboard` / `live_view` 都在构造时就把工位建好了，
+    构造之后再改就只改了布局、没改工位，两边对不上。
+    所以调用点放在各可执行文件 `main()` 的第一行（见 `bootstrap()`）。
+    """
+    n = max(1, min(int(n), EMPTY_SLOTS_MAX))
+    STORAGE_SLOTS["empty"]["ys"] = empty_slot_ys(n)
+    _rebuild_slot_points()
+    return n
+
+
+def bootstrap() -> int:
+    """可执行文件入口的统一起手：按环境变量调整布局。
+
+    为什么用环境变量而不是 ROS 参数：布局必须在节点构造前定下来，
+    而 ROS 参数要等节点构造后才能读 —— 顺序上就是矛盾的。
+    launch 里 `SetEnvironmentVariable('FLEETFLOW_EMPTY_SLOTS', ...)` 即可，
+    不设则用默认的 4 个，与历史行为完全一致。
+    """
+    import os
+    raw = os.environ.get("FLEETFLOW_EMPTY_SLOTS", "").strip()
+    if not raw:
+        return len(STORAGE_SLOTS["empty"]["ys"])
+    try:
+        return set_empty_slots(int(raw))
+    except ValueError:
+        return len(STORAGE_SLOTS["empty"]["ys"])
+
+
+
 def machine_rect(stage: str, lane: int):
     """某台机器的占地矩形 (x0, y0, x1, y1)。"""
     for s in STAGES:

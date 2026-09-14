@@ -24,6 +24,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from . import layout
 import rclpy
 from rclpy.executors import ExternalShutdownException
 
@@ -284,6 +285,7 @@ def _handler_for(frame: _Frame, map_frame: _Frame, size, ensure=None):
 
 
 def main(argv=None):
+    layout.bootstrap()      # 先定布局，再建节点
     rclpy.init(args=argv)
     node = LiveView()
     srv = ThreadingHTTPServer((node.host, node.port),

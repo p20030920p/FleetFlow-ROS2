@@ -1135,6 +1135,7 @@ def main(argv=None):
         except Exception:
             print(f"[dashboard] --size 解析失败：{args.size!r}，回退到 1600x1000", file=sys.stderr)
 
+    layout.bootstrap()      # 先定布局，再建节点
     rclpy.init()
     node = Dashboard()
     try:
