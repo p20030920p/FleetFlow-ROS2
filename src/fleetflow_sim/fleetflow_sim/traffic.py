@@ -97,6 +97,7 @@ PROTECTED_PRIORITY_BONUS = 8        # 保护状态额外优先级
 
 # ---------------------------------------------------------------- 卡死自愈
 PERSISTENT_STALL_HORIZON = 8.0      # 连续等待多久算持久卡死（秒）
+ESCAPE_ELECTION_TTL = 6.0           # 脱困选举有效期（秒），过期重选
 # 注意：这个模块级常量是**默认值**，实例会优先读同名参数
 # （traffic_manager 的 stall_horizon_s），便于做消融。
 _STALL_HORIZON_DEFAULT = PERSISTENT_STALL_HORIZON
@@ -243,6 +244,10 @@ class TrafficLayer:
         #   False = 新行为"选一个让净距最大的动作"（见 build_emergency_escape_command）
         self.escape_legacy = False
         self.stall_horizon = _STALL_HORIZON_DEFAULT   # 可被参数覆盖
+        # 脱困选举：rid -> (对方 rid, 选举时间)。
+        # 一对贴住的车里**只有一台**允许脱困，另一台原地不动。
+        self.escape_holder: dict[int, tuple[int, float]] = {}
+        self.escape_election_on = True     # 可关掉做消融（见第 50 节）
         self.reset()
 
     # ================================================================
@@ -299,7 +304,8 @@ class TrafficLayer:
             deadlock=0, yield_total=0, yield_fallback=0, starvation_prevent=0,
             pair_separation=0, emergency_break=0, collision_event=0,
             corridor_grant=0, corridor_reuse=0, corridor_release=0,
-            stall_replan=0, stall_near_target=0, escape=0, reservation_conflict=0,
+            stall_replan=0, stall_near_target=0, escape=0, escape_yield=0,
+            reservation_conflict=0,
         )
 
     # ================================================================
@@ -901,6 +907,36 @@ class TrafficLayer:
         # 全都拉不开：靠转朝向换几何，下一帧重新判
         return 0.0, self.choose_escape_rotation(rid)
 
+    def escape_election(self, rid, other, now):
+        """一对贴住的车里，谁负责脱困、谁原地不动。
+
+        为什么必须选举（第 49 节的实测）：两台车各自独立地"选一个让净距最大的
+        动作"，方向是**各自**算出来的 —— 完全可能一台往前、一台往后，
+        结果两头互推，谁也走不掉。日志里就是这个样子：
+
+            R1 escape from R0 (gap=0.08m)  ×13
+            R0 escape from R1 (gap=0.09m)  ×9
+
+        同一对车互相脱困 22 次、单次卡死 50.8 s。轮廓已经贴到 0.07~0.10 m
+        （车宽 0.44 m），双方同时动作只会把对方顶回去。
+
+        选举规则（确定性，不依赖时序）：
+          * **id 大的让路**：`rid > other` 的那台执行脱困；
+          * id 小的原地停住（v=0），把空间让出来；
+          * 这样对同一对车，无论谁先进入判定，结论都一致。
+
+        返回 True 表示"由我脱困"，False 表示"我原地等对方脱困"。
+        """
+        holder = self.escape_holder.get(rid)
+        if holder is not None:
+            h_other, h_t = holder
+            # 对方换了（或选举过期）就重新选，避免旧的选举钉死
+            if h_other == other and now - h_t < ESCAPE_ELECTION_TTL:
+                return rid > other
+            self.escape_holder.pop(rid, None)
+        self.escape_holder[rid] = (other, now)
+        return rid > other
+
     def closest_gap(self, rid):
         """最近同伴及其与我的**真实轮廓净距**（米）。
 
@@ -1205,6 +1241,15 @@ class TrafficLayer:
             # 用净距而不是车心距：车心距 0.45 m 时两台车其实已经嵌在一起了。
             closest, gap = self.closest_gap(rid)
             if closest is not None and gap < 0.30:
+                if self.escape_election_on and not self.escape_election(rid, closest, now):
+                    # 我方 id 更小 = 由对方脱困，我原地停住把空间让出来。
+                    # 这里必须真的给 0（而不是继续速度缩放），否则又变成互推。
+                    d.hold = True
+                    d.reason = f"give_way_to_R{closest}_escape"
+                    self.m["escape_yield"] += 1
+                    self._log(f"R{rid} stalled {self.get_wait_duration(rid, now):.1f}s, "
+                              f"hold for R{closest} to escape (gap={gap:.2f}m)")
+                    continue
                 v, w = self.build_emergency_escape_command(rid, closest)
                 d.has_escape = True
                 d.escape_v, d.escape_w = v, w

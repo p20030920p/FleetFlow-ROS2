@@ -60,6 +60,9 @@ class TrafficManager(Node):
         # 卡死判定地平线（秒）：连续低速多久算"持久卡死"。
         # 做成参数是为了判断"卡死自愈"在帮忙还是捣乱（拉大等于关掉）。
         self.declare_parameter("stall_horizon_s", 8.0)
+        # 脱困选举：一对贴住的车只让一台脱困，另一台原地让出空间。
+        # 关掉 = 双方各自脱困（旧行为，实测会互推）。
+        self.declare_parameter("escape_election", True)
 
         self.ttl = float(self.get_parameter("lease_ttl_s").value)
         self.leases: dict[str, Lease] = {}
@@ -83,6 +86,8 @@ class TrafficManager(Node):
         # QoS 修好之后它变得很敏感（假的位姿/速度曾让它恒定触发），
         # 所以做成可调参数，用来判断"卡死自愈"到底是在帮忙还是在捣乱。
         self.layer.stall_horizon = float(self.get_parameter("stall_horizon_s").value)
+        self.layer.escape_election_on = bool(
+            self.get_parameter("escape_election").value)
         self.peers: dict[int, RobotStatus] = {}
         self.last_seen: dict[int, float] = {}
 

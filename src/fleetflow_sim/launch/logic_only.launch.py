@@ -39,7 +39,8 @@ def _spawn(context, *args, **kwargs):
                               max_tasks_in_flight=int(LaunchConfiguration("max_tasks_in_flight").perform(context)))]),
         Node(package=PKG, executable="traffic_manager", name="traffic_manager", output="screen",
              parameters=[dict(stall_horizon_s=float(
-                 LaunchConfiguration("stall_horizon").perform(context)))]),
+                 LaunchConfiguration("stall_horizon").perform(context)),
+                 escape_election=LaunchConfiguration("escape_election").perform(context).lower() == "true")]),
         Node(package=PKG, executable="task_scheduler", name="task_scheduler", output="screen",
              parameters=[dict(policy=policy, seed=seed)]),
         Node(package=PKG, executable="metrics", name="metrics_recorder", output="screen",
@@ -76,6 +77,7 @@ def generate_launch_description():
         DeclareLaunchArgument("stuck_timeout", default_value="10.0"),
         DeclareLaunchArgument("battery_drain", default_value="0.55"),
         DeclareLaunchArgument("cancel_on_factory", default_value="true"),
+        DeclareLaunchArgument("escape_election", default_value="true"),
         DeclareLaunchArgument("stall_horizon", default_value="8.0"),
         DeclareLaunchArgument("true_speed_report", default_value="true"),
         DeclareLaunchArgument("stale_task_timeout", default_value="45.0"),
