@@ -97,7 +97,7 @@ PROTECTED_PRIORITY_BONUS = 8        # 保护状态额外优先级
 
 # ---------------------------------------------------------------- 卡死自愈
 PERSISTENT_STALL_HORIZON = 8.0      # 连续等待多久算持久卡死（秒）
-ESCAPE_ELECTION_TTL = 6.0           # 脱困选举有效期（秒），过期重选
+ESCAPE_ELECTION_TTL = 6.0           # 仅用于陈旧选举的清理
 # 注意：这个模块级常量是**默认值**，实例会优先读同名参数
 # （traffic_manager 的 stall_horizon_s），便于做消融。
 _STALL_HORIZON_DEFAULT = PERSISTENT_STALL_HORIZON
@@ -910,27 +910,29 @@ class TrafficLayer:
     def escape_election(self, rid, other, now):
         """一对贴住的车里，谁负责脱困、谁原地不动。
 
-        为什么必须选举（第 49 节的实测）：两台车各自独立地"选一个让净距最大的
-        动作"，方向是**各自**算出来的 —— 完全可能一台往前、一台往后，
-        结果两头互推，谁也走不掉。日志里就是这个样子：
+        为什么需要选举（第 49 节实测）：两台车各自独立地"选一个让净距最大的
+        动作"，方向**各自**算出来，完全可能一台往前、一台往后，两头互推谁也
+        走不掉。日志现场：
 
             R1 escape from R0 (gap=0.08m)  ×13
             R0 escape from R1 (gap=0.09m)  ×9
 
-        同一对车互相脱困 22 次、单次卡死 50.8 s。轮廓已经贴到 0.07~0.10 m
-        （车宽 0.44 m），双方同时动作只会把对方顶回去。
+        规则：**id 大的脱困、id 小的原地让位**，对同一对车结论唯一。
 
-        选举规则（确定性，不依赖时序）：
-          * **id 大的让路**：`rid > other` 的那台执行脱困；
-          * id 小的原地停住（v=0），把空间让出来；
-          * 这样对同一对车，无论谁先进入判定，结论都一致。
+        **第 58 节的重要教训：选举必须带 TTL 过期重选，不能"钉死"。**
+        我一度把它改成"贴住期间永远由同一台脱困"，理由是"贴住是持续状态"。
+        实测反而更糟（8 车 300 s）：
 
-        返回 True 表示"由我脱困"，False 表示"我原地等对方脱困"。
+            带 TTL 重选：最长卡死 105.8 s，脱困 81 次
+            钉死不改判：最长卡死 210.0 s，脱困 213 次   <-- 差一倍
+
+        原因不难理解：把让位的那台**按死不动**，等于让它长期堵在通道里，
+        而脱困的那台在窄通道里也绕不过去 —— 双方一起动至少还有机会错开。
+        所以这里恢复 TTL 版本，`ESCAPE_ELECTION_TTL` 到期后允许重新选举。
         """
         holder = self.escape_holder.get(rid)
         if holder is not None:
             h_other, h_t = holder
-            # 对方换了（或选举过期）就重新选，避免旧的选举钉死
             if h_other == other and now - h_t < ESCAPE_ELECTION_TTL:
                 return rid > other
             self.escape_holder.pop(rid, None)

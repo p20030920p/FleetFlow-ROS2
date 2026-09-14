@@ -53,6 +53,20 @@ class Machine:
         self.busy_time = 0.0
         self.started = time.time()
         self.holding = None
+        # ---------------------------------------------------------------
+        # 逐工序归因（第 57 节的下一步）。
+        #
+        # 只知道"成品少"没法定位：可能是机器在等上游料（**饿**），
+        # 也可能是机器闲着手、但完工位被占住没人运走（**堵**）。
+        # 两者修法完全不同，所以把空闲时间按原因拆开累计：
+        #   idle_starved  : 空闲，且本工序 waiting 位没料  -> 上游运输没送到
+        #   idle_blocked  : 空闲，waiting 有料但吃不下     -> 完工位/下游堵住
+        # 判定在 _feed_machines 里做（那里才知道 waiting 位有没有料）。
+        self.idle_starved_time = 0.0
+        self.idle_blocked_time = 0.0
+        self._last_t = time.time()
+        self._last_state = "idle"
+        self._last_blocked = False
 
     @property
     def state(self):
@@ -293,12 +307,40 @@ class FactoryManager(Node):
         room = ",".join(f"{k}:{v}" for k, v in s.pop("room").items())
         self.get_logger().info(
             f"pipeline {s} · 下游可收 {room} · done={self.completed}")
+        # 逐工序归因：按 stage 汇总忙/饿/堵（工程单位：秒）
+        agg: dict[str, list[float]] = {}
+        for m in self.machines:
+            a = agg.setdefault(m.stage, [0.0, 0.0, 0.0])
+            a[0] += m.busy_time
+            a[1] += m.idle_starved_time
+            a[2] += m.idle_blocked_time
+        parts = []
+        for st in [x["name"] for x in layout.STAGES]:
+            if st not in agg:
+                continue
+            busy, starved, blocked = agg[st]
+            tot = busy + starved + blocked
+            if tot <= 0:
+                continue
+            parts.append(f"{st}: 忙{busy/tot:4.0%} 饿{starved/tot:4.0%} 堵{blocked/tot:4.0%}")
+        if parts:
+            self.get_logger().info("stage 忙/饿/堵 · " + " · ".join(parts))
 
     def _feed_machines(self, now):
         for m in self.machines:
+            # 先结算上一段空闲时间属于哪一类（用**上一次**的观测）
+            dt = now - m._last_t
+            if dt > 0 and m.holding is None:
+                if m._last_blocked:
+                    m.idle_blocked_time += dt
+                else:
+                    m.idle_starved_time += dt
+            m._last_t = now
             if m.holding is not None:
                 continue
             src = self.stations[f"{m.stage}_waiting_{m.lane}"]
+            # waiting 位有料 = 上游送到了，只是还没轮到（或刚吃完）
+            m._last_blocked = src.material is not None
             if src.material is None or src.reserved is not None:
                 continue
             m.holding = src.material
