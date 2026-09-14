@@ -147,7 +147,7 @@ dominates every other term and the auction degenerates to FIFO.
 > **Fleet size is a design parameter, not a target.** Four robots, same plant, 24 units,
 > six 300 s Gazebo runs — the spread is the point:
 
-| AGVs | deliveries per 300 s | per min | hull overlaps |
+| AGVs | transport ops per 300 s | per min | hull overlaps |
 |---:|---|---:|---:|
 | **4** (recommended) | 16 · 10 · 13 · 14 · 22 · 18 | 1.8–5.5 | 0 |
 | 8 | 4 · 7 · 9 | 0.7–1.7 | 0 · 0 · 2 |
@@ -157,6 +157,12 @@ dominates every other term and the auction degenerates to FIFO.
 > 26 × 16 m with a 1.45 m aisle against a 1.04 m passing requirement, so the margin is thin
 > and the cost of meeting rises faster than the added capacity. **Four robots are the
 > economic fleet for this layout.**
+>
+> **What the column counts.** These are *transport operations* - one move of material from A to
+> B - not finished products. A finished unit needs five or more of them, so product counts are
+> an order of magnitude lower: about 0.6 units per minute in logic mode, while machines still
+> sit idle **76-100 % of the time waiting for material**. For finished output read the
+> factory's `done`, logged every ten seconds.
 >
 > This round's progress is on root causes. On the Gazebo side, `/robot_i/odom` had
 > incompatible QoS — the bridge publishes RELIABLE while the controller subscribed
@@ -168,6 +174,20 @@ dominates every other term and the auction degenerates to FIFO.
 > What is still unsolved is **variance**: the same command over the same duration can swing
 > by a factor of two. Evidence and the failed attempts:
 > [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
+
+**Where the plant actually loses its time.** Five independent measurements now agree. Fleet size
+does not matter — 8 robots deliver roughly what 4 do. Docking-slot count does not matter. A larger
+in-flight cap is *worse*. A single delivery takes only 22 s. And yet a run finishes 16–41 transport
+operations while logging 194–361 escape manoeuvres, worst stall 88–210 s: far more time goes into
+extracting robots from each other than into moving material, so machines sit **starved 76–100 %** of
+the time and **blocked 0 %** — they are not full, they are empty, because nothing arrives.
+
+The cause is the 1.45 m aisle against a 1.04 m passing requirement, the same defect sections 36–42
+chased through the avoidance layer. Four rounds of tuning the fleet, the scheduler and the escape
+rules all came back negative, so the next step is to change the aisle rather than the rules: widen it,
+add passing bays so a yielding robot has somewhere to go, or make it a one-way loop. Parking the
+yielding robot in place, which was measured this round, made stalls twice as bad — avoidance rules
+alone cannot manufacture throughput.
 
 ![Live dashboard, four AGVs working](assets/readme/live-board-4agv.png)
 
@@ -244,8 +264,8 @@ the average. Both are kept; neither is claimed to pay for itself here.
 | Event-driven re-planning | Only when a peer occupies the next 2.2 m of the path — a timer resets pure pursuit mid-turn and the vehicle oscillates in place. |
 | Collision test | Oriented rectangles against each other (separating-axis), not centre distance. See below. |
 
-4 AGVs, 300 s wall clock, six Gazebo runs, everything enabled: **16 · 10 · 13 · 14 · 22 · 18 units
-delivered, zero hull intersections, zero false stalls, no crashes.** The spread across identical
+4 AGVs, 300 s wall clock, six Gazebo runs, everything enabled: **16 · 10 · 13 · 14 · 22 · 18 transport
+operations, zero hull intersections, zero false stalls, no crashes.** The spread across identical
 commands is the honest part of that line: output varies about twofold.
 
 **Why centre distance is the wrong test.** The body is 0.56 × 0.44 m: two vehicles need 0.44 m
