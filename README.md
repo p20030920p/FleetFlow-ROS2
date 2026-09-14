@@ -19,7 +19,13 @@
 
 ![A full transport cycle: tasks appear as hollow squares, the auction awards each to a vehicle, the vehicle drives its planned path and detours around pallets parked in the aisle](assets/readme/demo.gif)
 
-*One cycle, dispatch to delivery. Solid line = covered, dashed = remaining plan. The aisle pallets are static obstacles in the A\* cost map.*
+*One cycle, dispatch to delivery. Solid line = covered, dashed = remaining plan. The aisle
+pallets are static obstacles in the A\* cost map.*
+
+> **Recorded 2026-09-14** from the current build, 4 AGVs and 40 units in the logic stack, then
+> rendered offscreen. It replaces a capture made before the odometry-QoS and speed-reporting
+> fixes, in which vehicles passed closer than their bodies allow under physics — that version
+> is no longer in the repository. Motion here is ideal kinematics, not Gazebo contact.
 
 Five AGVs move cans between carding, drawing and roving machines on a 26 × 16 m floor. A scheduler
 assigns the work, each vehicle plans and drives its own route, and a shift board reports the floor.
@@ -37,18 +43,28 @@ assigns the work, each vehicle plans and drives its own route, and a shift board
 ## Quick start
 
 ```bash
+source /opt/ros/jazzy/setup.bash          # required first: provides ros2 and colcon
 mkdir -p ~/ros2_ws/src && cd ~/ros2_ws/src
 git clone https://github.com/p20030920p/FleetFlow-ROS2.git
-cd ~/ros2_ws && colcon build --symlink-install && source install/setup.bash
+cd FleetFlow-ROS2                         # build from the repo root, not the workspace root
+colcon build --symlink-install
+source install/setup.bash                 # per-shell; re-run in every new terminal
+
+python3 tools/preflight.py                # checks leftovers, DISPLAY, GL before launching
 
 ros2 launch fleetflow_sim factory.launch.py                  # Gazebo server only
-ros2 launch fleetflow_sim factory.launch.py gui:=true        # with the Gazebo GUI
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # no Gazebo
 
 # Gazebo GUI and the floor plan live in a browser, side by side
 ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=4
-# open http://127.0.0.1:8080 — the board streams on /stream and /map/stream (MJPEG)
+# open http://127.0.0.1:8080 — the board streams on /stream and /map/stream
 ```
+
+> **If the Gazebo window force-quits or opens empty**, run `bash tools/gz_reset.sh` first: an
+> orphaned server from a previous `kill -9` will capture the new window. Then run
+> `python3 tools/preflight.py`, which reports leftovers, `DISPLAY`, `/dev/dri` and the GL
+> renderer in one go. Software rendering (llvmpipe/swrast) is the usual cause on VMs and in
+> containers — use `gui:=false web:=true` there, which needs no GPU at all.
 
 Both views read the same topics, so putting them next to each other is the quickest way to check
 that the map, headings and task flow agree with the 3D scene. The page streams MJPEG; clicking it

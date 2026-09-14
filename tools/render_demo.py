@@ -45,6 +45,21 @@ FLEET = ["#1f3a5f", "#2e7d4f", "#c0392b", "#e8a33d", "#6b4f8a", "#0f7b8a",
 
 MAT = {"empty": ("#9a958c", "空筒"), "green": (GREEN, "生条"),
        "yellow": (AMBER, "熟条"), "red": (RED, "粗纱成品")}
+# 未登记的类型 -> 兜底配色，避免渲染时 KeyError。
+# 实测踩过：录制窗口内如果没有任何物料走到最后一道工序，
+# 就不会出现 "red" 这个类型，而渲染器假定四种都在，直接崩在 MAT[key]。
+MAT_FALLBACK = ("#6d6a63", "其他")
+_seen_unknown: set[str] = set()
+
+
+def mat_of(key: str):
+    """取 (颜色, 中文名)，未登记的类型给兜底色并只提示一次。"""
+    if key in MAT:
+        return MAT[key]
+    if key not in _seen_unknown:
+        _seen_unknown.add(key)
+        print(f"[render_demo] 未登记的物料类型 {key!r}，用兜底色渲染")
+    return MAT_FALLBACK
 STAGE_CN = {"carding": "梳棉", "drawing": "并条", "roving": "粗纱"}
 STAGE_EN = {"carding": "CARDING", "drawing": "DRAWING", "roving": "ROVING"}
 
@@ -294,17 +309,25 @@ def main() -> int:
     args = ap.parse_args()
 
     rows = [json.loads(l) for l in open(args.jsonl, encoding="utf-8")]
-    # 有仿真时钟就用仿真时间（Gazebo 模式实时因子远小于 1，墙钟会骗人）
-    key = "sim" if rows[0].get("sim") is not None else "t"
+    # 有仿真时钟就用仿真时间（Gazebo 模式实时因子远小于 1，墙钟会骗人）。
+    #
+    # 为什么单独取个 `tkey`：下面渲染循环里有一个
+    # `for key in ("empty", "green", ...)` —— 它**复用了同一个变量名** `key`，
+    # 于是 `rows[0][key]` 被覆盖成 `rows[0]["yellow"]`，直接 KeyError: 'yellow'。
+    # 报错行在循环里、赋值行在循环外，隔了 30 行，看 traceback 很难一眼看出。
+    # 时间键从此只叫 `tkey`，并把内层循环变量改名，避免再次同名覆盖。
+    tkey = "sim" if rows[0].get("sim") is not None else "t"
+    if tkey not in rows[0]:
+        raise SystemExit(f"录制文件没有时间键 {tkey!r}（有 {sorted(rows[0])}）")
     if args.t_from is not None or args.t_to is not None:
-        lo = args.t_from if args.t_from is not None else rows[0][key]
-        hi = args.t_to if args.t_to is not None else rows[-1][key]
+        lo = args.t_from if args.t_from is not None else rows[0][tkey]
+        hi = args.t_to if args.t_to is not None else rows[-1][tkey]
         # 任务清单要保留窗口之前就存在的任务，否则画面里会凭空冒出方框
-        keep = [r for r in rows if lo <= r[key] <= hi]
+        keep = [r for r in rows if lo <= r[tkey] <= hi]
         if len(keep) < 2:
             print("窗口内没有帧"); return 2
         rows = keep
-    t0, t1 = rows[0][key], rows[-1][key]
+    t0, t1 = rows[0][tkey], rows[-1][tkey]
     dur = (t1 - t0) / args.speed
     if args.still_at is not None:
         n, step = 1, 0.0
@@ -322,7 +345,7 @@ def main() -> int:
     for k in range(n):
         tt = t0 + k * step
         idx = min(len(rows) - 1,
-                  int((tt - rows[0][key]) / max(1e-6, rows[1][key] - rows[0][key])))
+                  int((tt - rows[0][tkey]) / max(1e-6, rows[1][tkey] - rows[0][tkey])))
         rec = rows[idx]
         sc = max(1.0, args.still_scale) if args.still_at is not None else 1.0
         fig = plt.figure(figsize=(CW * sc / 100, CH * sc / 100), dpi=100)
@@ -413,9 +436,13 @@ def main() -> int:
         ax.text(px0 + 16, MAP["t"] - 42, "MATERIAL FLOW", fontsize=7.0,
                 color=MUTED, va="center")
         yy = MAP["t"] - 76
-        for key in ("empty", "green", "yellow", "red"):
-            col, cn = MAT[key]
-            n_k = sum(1 for t in tasks if t["material"] == key
+        # 只画**本次运行真的出现过**的类型，加上始终存在的空筒。
+        # 顺序固定，保证同一类型在不同录制里的颜色与位置一致。
+        present = {t["material"] for t in tasks}
+        for mkey in [k for k in ("empty", "green", "yellow", "red")
+                     if k == "empty" or k in present]:
+            col, cn = mat_of(mkey)
+            n_k = sum(1 for t in tasks if t["material"] == mkey
                       and tt >= t["t_created"])
             ax.add_patch(Rectangle((px0 + 16, yy - 8), 14, 14, facecolor=col,
                                    edgecolor="none"))

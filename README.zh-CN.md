@@ -21,6 +21,10 @@
 
 *一个完整循环，从发放任务到送达。实线=已行驶，虚线=剩余规划；通道里的托盘是 A\* 代价图里的真实静态障碍。*
 
+> **录制于 2026-09-14**，用当前构建：逻辑栈 + 4 台车 + 40 件物料，离屏渲染。
+> 它替换掉一张**修复之前**的录制 —— 那一版里车辆的通过距离在物理下是不允许的，
+> 已从仓库移除。这里画的是理想运动学，不是 Gazebo 接触。
+
 5 台 AGV 在 26 × 16 米的车间里，于梳棉、并条、粗纱机台之间搬运条筒。调度器派单，
 每台车自己规划并执行路径，生产看板显示车间状态。
 
@@ -37,21 +41,31 @@
 ## 快速开始
 
 ```bash
+source /opt/ros/jazzy/setup.bash          # 必须先做：ros2 与 colcon 都来自这里
 mkdir -p ~/ros2_ws/src && cd ~/ros2_ws/src
 git clone https://github.com/p20030920p/FleetFlow-ROS2.git
-cd ~/ros2_ws && colcon build --symlink-install && source install/setup.bash
+cd FleetFlow-ROS2                         # 在**仓库根**编译，不是工作区根
+colcon build --symlink-install
+source install/setup.bash                 # 每个新终端都要重新 source
+
+python3 tools/preflight.py                # 启动前体检：残留进程 / DISPLAY / GL
 
 ros2 launch fleetflow_sim factory.launch.py                  # 只起 Gazebo 服务端
-ros2 launch fleetflow_sim factory.launch.py gui:=true        # 带 Gazebo 界面
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # 不启 Gazebo
 
 # Gazebo 界面 + 浏览器里的实时平面图，并排对照
 ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=4
-# 打开 http://127.0.0.1:8080 —— 画面走 /stream 与 /map/stream（MJPEG 流）
+# 打开 http://127.0.0.1:8080 —— 画面走 /stream 与 /map/stream
 ```
 
+> **Gazebo 窗口闪退、或打开后一片空白**：先跑 `bash tools/gz_reset.sh` ——
+> 上一次 `kill -9` 留下的孤儿服务端会抢走新窗口。再跑
+> `python3 tools/preflight.py`，它会一次报出残留进程、`DISPLAY`、`/dev/dri`
+> 与 GL 渲染后端。虚拟机/容器里最常见的是软件渲染（llvmpipe/swrast）——
+> 这种环境请用 `gui:=false web:=true`，完全不依赖 GPU。
+
 两边读的是同一批话题，所以并排放就能最快地确认平面图里的坐标、朝向、任务流向和三维场景是否一致。
-页面走 MJPEG 流；**点一下切到铺满全屏的平面图**（`Esc` 或再点一下返回），
+页面走 multipart 流（分片载荷是 PNG）；**点一下切到铺满全屏的平面图**（`Esc` 或再点一下返回），
 也可以直接取 `/map.png` 拿那一帧静图。`web_port` / `web_size` / `web_every`
 可覆盖端口、分辨率与刷新间隔。单独运行：`ros2 run fleetflow_sim live_view`。
 
