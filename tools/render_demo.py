@@ -102,12 +102,18 @@ def draw_floor(ax):
     ax.add_patch(Rectangle((bx, by), W * s, H * s, facecolor="#ffffff",
                            edgecolor="none", zorder=1))
     # 分区底色：按工序把 x 切成三段
-    for x0, x1, col in ((0.0, 11.2, "#eef2ee"), (11.2, 17.7, "#eceff4"),
-                        (17.7, 26.0, "#f1eef4")):
+    # 分区边界由工序的等料位/完工位推出（写死会在改净宽后错位）
+    bounds = L.world_bounds()
+    mids = [(L.STAGES[i]["done_x"] + L.STAGES[i + 1]["wait_x"]) / 2
+            for i in range(len(L.STAGES) - 1)]
+    cuts = [bounds[0]] + mids + [bounds[1]]
+    tints = ("#eef2ee", "#eceff4", "#f1eef4")
+    for k, (x0, x1) in enumerate(zip(cuts, cuts[1:])):
+        col = tints[min(k, len(tints) - 1)]
         px, py, _ = w2p(x0, 0)
         ax.add_patch(Rectangle((px, py), (x1 - x0) * s, H * s, facecolor=col,
                                edgecolor="none", zorder=2))
-    for x in range(1, 26, 2):                      # 柱网
+    for x in range(1, int(bounds[1]) + 1, 2):      # 柱网（到厂房东界为止）
         px, py, _ = w2p(x, 0)
         ax.plot([px, px], [py, py + H * s], color=RULE, lw=0.4, alpha=0.5, zorder=3)
     # 机台

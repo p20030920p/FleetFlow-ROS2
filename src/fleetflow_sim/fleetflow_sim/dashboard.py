@@ -598,7 +598,9 @@ class Dashboard(Node):
         b.rect(x0, y0, w, h, facecolor=PANEL, edgecolor=RULE, lw=0.8, zorder=1)
         b.rect(x0 + 0.0062, y0 + h - 0.0200, 0.0055, 0.0110, facecolor=NAVY, zorder=3)
         b.text(x0 + 0.0160, y0 + h - 0.0145, "车间平面图", size=10.0, weight="bold", color=INK)
-        b.text(x0 + 0.0160, y0 + h - 0.0272, "FLOOR PLAN · 26 × 16 m · 1:1",
+        _bw, _bh = layout.world_bounds()[1] - layout.world_bounds()[0], 16.0
+        b.text(x0 + 0.0160, y0 + h - 0.0272,
+               f"FLOOR PLAN · {_bw:.0f} × {_bh:.0f} m · 1:1",
                size=5.9, color=FAINT)
         n_move = sum(1 for r in self.robots.values() if r.task_id is not None and r.task_id >= 0)
         b.text(x0 + w - 0.008, y0 + h - 0.0180, f"在途 {n_move} 台 · 工位 {len(layout.all_station_points())} 处",
@@ -645,31 +647,44 @@ class Dashboard(Node):
                family=FONT_MONO)
 
     def _draw_map(self, b, ax, box_w_px, box_h_px):
-        x_min, x_max = -0.25, 26.25
-        y_mid, x_span = 8.0, (x_max - x_min)
+        # 可视范围必须跟着布局走（见 layout.world_bounds 的注释）：
+        # 工序净宽改成 2.0 m 之后红料库东移到 x≈28，写死的 26.25 会把
+        # 货架画到地图框外、压住右侧面板。这里改成推导 + 左右各留一点边。
+        wx0, wx1, wy0, wy1 = layout.world_bounds()
+        x_min, x_max = wx0 - 0.25, wx1 + 0.25
+        y_mid, x_span = (wy0 + wy1) / 2, (x_max - x_min)
         y_span = x_span * box_h_px / box_w_px
         ax.set_xlim(x_min, x_max)
         ax.set_ylim(y_mid - y_span / 2, y_mid + y_span / 2)
 
         # 地面 + 1m 细格 + 柱网
-        ax.add_patch(Rectangle((0, 0), 26, 16, facecolor="#f8f6f0", edgecolor="none", zorder=0))
-        for gx in range(1, 26):
-            ax.plot([gx, gx], [0, 16], color="#eae6db", lw=0.35, zorder=1)
-        for gy in range(1, 16):
-            ax.plot([0, 26], [gy, gy], color="#eae6db", lw=0.35, zorder=1)
-        for gx in [layout.COLUMN_PITCH * k for k in range(1, 4)]:
-            ax.plot([gx, gx], [0, 16], color="#ddd7c8", lw=0.7, ls=(0, (6, 4)), zorder=1.2)
-        ax.plot([0, 26], [8, 8], color="#ddd7c8", lw=0.7, ls=(0, (6, 4)), zorder=1.2)
+        floor_w, floor_h = wx1 - wx0, wy1 - wy0
+        ax.add_patch(Rectangle((wx0, wy0), floor_w, floor_h,
+                               facecolor="#f8f6f0", edgecolor="none", zorder=0))
+        for gx in range(int(wx0) + 1, int(wx1) + 1):
+            ax.plot([gx, gx], [wy0, wy1], color="#eae6db", lw=0.35, zorder=1)
+        for gy in range(int(wy0) + 1, int(wy1) + 1):
+            ax.plot([wx0, wx1], [gy, gy], color="#eae6db", lw=0.35, zorder=1)
+        for gx in [layout.COLUMN_PITCH * k for k in range(1, 5)
+                   if layout.COLUMN_PITCH * k < wx1]:
+            ax.plot([gx, gx], [wy0, wy1], color="#ddd7c8", lw=0.7, ls=(0, (6, 4)), zorder=1.2)
+        ax.plot([wx0, wx1], [8, 8], color="#ddd7c8", lw=0.7, ls=(0, (6, 4)), zorder=1.2)
 
         # 工序流向（空筒库 → 成品库，走 y=7.5 的通道）
-        ax.annotate("", xy=(23.0, 7.5), xytext=(3.0, 7.5),
+        ax.annotate("", xy=(layout.STORAGE_SLOTS["red"]["x"] + 0.2, 7.5), xytext=(3.0, 7.5),
                     arrowprops=dict(arrowstyle="-|>", color="#b3ada0", lw=1.1,
                                     linestyle=(0, (7, 4))), zorder=2)
         ax.text(3.10, 7.62, "投料", color=FAINT, fontsize=5.0, ha="left", va="bottom", zorder=3)
-        ax.text(22.90, 7.62, "入库", color=FAINT, fontsize=5.0, ha="right", va="bottom", zorder=3)
+        ax.text(layout.STORAGE_SLOTS["red"]["x"] + 0.1, 7.62, "入库", color=FAINT,
+                fontsize=5.0, ha="right", va="bottom", zorder=3)
 
         # 三个工序区
-        edges = [(4.55, 12.15), (12.15, 17.50), (17.50, 23.40)]
+        # 工序区边界由该段自己的等料位/完工位推出，写死会在改净宽后错位
+        edges = []
+        for i, st in enumerate(layout.STAGES):
+            left = st["wait_x"] - 1.00 if i == 0 else (st["wait_x"] + layout.STAGES[i-1]["done_x"]) / 2
+            right = (st["done_x"] + layout.STAGES[i+1]["wait_x"]) / 2 if i + 1 < len(layout.STAGES) else st["done_x"] + 1.10
+            edges.append((left, right))
         for st, (zx0, zx1) in zip(layout.STAGES, edges):
             rgb = _stage_rgb(st["name"])
             ax.add_patch(Rectangle((zx0, 1.55), zx1 - zx0, 11.90, facecolor=_tint(rgb, 0.925),
@@ -787,7 +802,8 @@ class Dashboard(Node):
                 va="center", zorder=3)
 
         # 墙体（双线）+ 柱子
-        ax.add_patch(Rectangle((0, 0), 26, 16, facecolor="none", edgecolor=INK, lw=1.4, zorder=6))
+        ax.add_patch(Rectangle((wx0, wy0), wx1 - wx0, wy1 - wy0,
+                               facecolor="none", edgecolor=INK, lw=1.4, zorder=6))
         ax.add_patch(Rectangle((0.28, 0.28), 25.44, 15.44, facecolor="none",
                                edgecolor="#b8b2a4", lw=0.5, zorder=6))
         for gx in [layout.COLUMN_PITCH * k for k in range(1, 4)]:

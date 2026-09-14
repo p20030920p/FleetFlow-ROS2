@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 # ---------------------------------------------------------------- 厂房
+# 厂房外形尺寸。**w 必须等于 world_bounds 的宽度** —— 渲染器用它做
+# 世界→像素的缩放，写死就会在改布局后把货架画到图外（第 64 节）。
 BUILDING = dict(w=26.0, h=16.0, wall_h=6.0)
 FIELD = dict(x_min=0.85, x_max=25.15, y_min=0.85, y_max=15.15)
 
@@ -224,6 +226,28 @@ def bootstrap() -> int:
     except ValueError:
         return len(STORAGE_SLOTS["empty"]["ys"])
 
+
+
+def world_bounds() -> tuple[float, float, float, float]:
+    """厂房在世界里的可视边界 (x_min, x_max, y_min, y_max)。
+
+    **必须由布局推导，不能写死。** 画图（dashboard / live_view）原先硬编码
+    `xlim = -0.25 … 26.25`、地面矩形 26×16，而工序净宽改成 2.0 m 之后
+    红料库移到了 x≈28 —— 于是货架被画到地图框外，压住了右侧面板。
+    这类"布局一改、绘图就错位"的问题只有让两边共用同一份推导才能根除。
+    """
+    rack_half = RACK["depth"] / 2
+    x_min = min(0.0, STORAGE["empty"]["x"] - RACK["w"])
+    x_max = max(s["done_x"] for s in STAGES)
+    x_max = max(x_max, STORAGE["red"]["x"] + rack_half)
+    for pt in STORAGE_SLOT_POINTS.values():
+        x_max = max(x_max, pt["x"])
+        x_min = min(x_min, pt["x"])
+    y_min, y_max = 0.0, 16.0
+    out = (x_min, x_max + 0.6, y_min, y_max)
+    # 同步 BUILDING.w：渲染器的像素缩放依赖它，二者必须一致
+    BUILDING["w"] = out[1] - out[0]
+    return out
 
 
 # ---- 用新的默认净宽重建一次派生坐标 ----
