@@ -144,26 +144,30 @@ dominates every other term and the auction degenerates to FIFO.
 
 ## Results
 
-> **Fleet size is a design parameter, not a target.** Measured in Gazebo with the same
-> 24 units and the same 260 s window, more robots do *less* work — each overlap slows two
-> robots at once, and overlaps scale with density:
+> **Fleet size is a design parameter, not a target.** Four robots, same plant, 24 units,
+> six 300 s Gazebo runs — the spread is the point:
 
-| AGVs | run A | run B | note |
-|---:|---:|---:|---|
-| 8 | 7 | 8 | 17 escapes, 9 collisions |
-| 4 | 8 | 10 | 81 escapes, 86 stall recoveries |
-| 2 | **13** (esc 0, coll 0) | **0** (esc 87, stall 87) | same command, opposite result |
+| AGVs | deliveries per 300 s | per min | hull overlaps |
+|---:|---|---:|---:|
+| **4** (recommended) | 16 · 10 · 13 · 14 · 22 · 18 | 1.8–5.5 | 0 |
+| 8 | 4 · 7 · 9 | 0.7–1.7 | 0 · 0 · 2 |
 
-> **Smaller fleets are no better in Gazebo, and none of them is reliable yet.** Two robots
-> produced 13 deliveries with zero avoidance events in one run and zero deliveries with 87
-> in the next, from the identical command. Adding robots measurably adds contention (8 → 4
-> takes escapes from 17 to 81), but reducing them does not buy reproducibility, so this is
-> not a fleet-size fix. The bottleneck is a positive feedback in the avoidance layer that
-> the findings document traces to the three hard-safety exits in `_avoid`.
+> **Eight robots deliver half of what four do.** Yields jump from single digits to 42–87, so
+> the larger fleet is not busier — it spends most of its time giving way. The plant is
+> 26 × 16 m with a 1.45 m aisle against a 1.04 m passing requirement, so the margin is thin
+> and the cost of meeting rises faster than the added capacity. **Four robots are the
+> economic fleet for this layout.**
 >
-> **Until that is fixed, treat Gazebo figures on this page as unstable**, and prefer
-> `logic_only.launch.py` for anything quantitative — same coordination stack, wall-clock
-> accurate. Evidence and the failed attempts: [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
+> This round's progress is on root causes. On the Gazebo side, `/robot_i/odom` had
+> incompatible QoS — the bridge publishes RELIABLE while the controller subscribed
+> BEST_EFFORT, so under DDS not one message was delivered and both the controller and the
+> coordinator believed every robot was still at its spawn pose. With that fixed, four robots
+> roughly doubled their output, false stalls fell from 96–232 to zero, and hull overlaps
+> went to zero.
+>
+> What is still unsolved is **variance**: the same command over the same duration can swing
+> by a factor of two. Evidence and the failed attempts:
+> [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
 
 ![Live dashboard, two AGVs working](assets/readme/live-board-2agv.png)
 
@@ -271,7 +275,9 @@ world with the ROS bridge out of the way, a commanded 0.6 m/s over 8 s moves the
 3.952 m through ROS — 85 % and 82 % of the ideal, which is ordinary acceleration and settling. Contact,
 friction and bridging are all sound; the physics note above is retracted.
 
-What actually limited Gazebo was fleet size, not physics — see the table under *Results*.
+What actually limits Gazebo is the cost of meeting, not physics: a 1.45 m aisle against a
+1.04 m passing requirement means contention climbs steeply with density — see the table under
+*Results*.
 
 ---
 
