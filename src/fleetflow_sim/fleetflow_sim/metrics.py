@@ -273,6 +273,9 @@ def main():
             node.write_run()
         except Exception:
             pass
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        except Exception:                                     # noqa: BLE001
+            pass
         if rclpy.ok():
             rclpy.shutdown()

@@ -1257,6 +1257,14 @@ def main():
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        # 关闭路径必须吞掉异常。rclpy 在收到 SIGINT 时上下文可能已经失效，
+        # `destroy_node()` 会在销毁订阅时抛 InvalidHandle，**打出一整段
+        # Traceback 却是无害的** —— 而它出现在每个 robot_controller 上，
+        # 让 `Ctrl-C` 看起来像崩溃（实测 4 台车会刷 4 段），
+        # quick start 的第一次体验很容易被它误导。
+        try:
+            node.destroy_node()
+        except Exception:                                     # noqa: BLE001
+            pass
         if rclpy.ok():
             rclpy.shutdown()

@@ -300,7 +300,10 @@ def main(argv=None):
         pass
     finally:
         srv.shutdown()
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        except Exception:                                     # noqa: BLE001
+            pass
         if rclpy.ok():
             rclpy.shutdown()
     return 0

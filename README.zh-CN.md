@@ -52,7 +52,8 @@ cd FleetFlow-ROS2                         # 在**仓库根**编译，不是工�
 colcon build --symlink-install
 source install/setup.bash                 # 每个新终端都要重新 source
 
-python3 tools/preflight.py                # 启动前体检：残留进程 / DISPLAY / GL
+python3 tools/preflight.py                # 环境体检：残留进程 / DISPLAY / GL
+python3 tools/check_gazebo.py             # 三关自检：服务端 / 界面 / 渲染
 
 ros2 launch fleetflow_sim factory.launch.py                  # 只起 Gazebo 服务端
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=4 policy:=ssi   # 不启 Gazebo
@@ -61,6 +62,11 @@ ros2 launch fleetflow_sim logic_only.launch.py num_robots:=4 policy:=ssi   # 不
 ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=4
 # 打开 http://127.0.0.1:8080 —— 画面走 /stream 与 /map/stream
 ```
+
+`check_gazebo.py` 把"进不去 Gazebo / 渲染不出来"拆成**三关分别验证**，失败时能直接指出
+是哪一关：**服务端**（无头物理，测 20 s）、**界面**（需要 `DISPLAY`/`WAYLAND_DISPLAY`
+与可用的 GL —— `gz gui` 必须存活 25 s）、**渲染**（相机出图，需要 `bridge_cameras:=true`）。
+无显示环境加 `--no-gui`。在开发机上三关全过；你那边若失败，输出会直接点名缺什么。
 
 > **Gazebo 窗口闪退、或打开后一片空白**：先跑 `bash tools/gz_reset.sh` ——
 > 上一次 `kill -9` 留下的孤儿服务端会抢走新窗口。再跑

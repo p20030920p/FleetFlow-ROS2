@@ -2377,3 +2377,51 @@ edges = [(4.55, 12.15), (12.15, 17.50), (17.50, 23.40)]   # 工序分区边界
 
 **凡是"布局的派生量"，绘图侧一律不能写死。** 这一节和第 52/53 节的
 参数化是同一个道理：只要存在两份独立的坐标来源，改一边就必然错位。
+
+## 65. quick start 的三关自检 + 关闭时的 Traceback 噪声
+
+用户报告："按 quick start 在本地没法进入 Gazebo，或者渲染"。
+在开发机上从**全新 clone** 走了一遍完整流程（`/tmp/qs_check`，避开本仓库的
+既有构建），逐关取证：
+
+| 关卡 | 结果 |
+|---|---|
+| `colcon build --symlink-install` | 两个包 10.3 s 编译通过 |
+| 服务端（`gui:=false`） | **通过** —— 232 行日志、`factory_manager up · 12 units · 8 machines`、实体创建成功 |
+| 界面（`gui:=true`） | **通过** —— 按 3 s 采样连续监控 120 s，`gz` 包装脚本 / `sim server` / `sim gui` 三个进程**全程存活**，看板同时以约 2 Hz 出帧 |
+| 渲染（相机） | 依赖 `bridge_cameras:=true`，README 已写；本自检不代跑以免抢进程 |
+
+**所以代码侧这三条路都是通的**，问题在环境。为了让"环境问题"能一句话定位，
+新增 `tools/check_gazebo.py`：把三关拆开分别验证，失败时直接点名缺什么 ——
+服务端测 20 s 是否存活、界面测 `gz gui` 能否存活 25 s（需要 DISPLAY/WAYLAND + GL）、
+渲染给出确切的命令。无显示环境用 `--no-gui`。开发机上三关全过。
+
+### 顺带修掉一个会误导人的真问题
+
+从零跑 quick start 时发现：**Ctrl-C 时每个 `robot_controller` 都会打一段 Traceback**：
+
+```
+File ".../rclpy/subscription.py", line 100, in destroy
+    handler.destroy()
+```
+
+原因：收到 SIGINT 后 rclpy 上下文已失效，`node.destroy_node()` 销毁订阅时抛
+`InvalidHandle`。**它无害，但看起来像崩溃**，而 quick start 的第一次体验
+最容易被它带偏（4 台车就刷 4 段）。已给全部 6 个节点的关闭路径加 try/except，
+现在 Ctrl-C 是干净的。
+
+### 关于"判定有问题、流程不流畅"
+
+用 `tools/stall_report.py` 与状态驻留时长量了交付的那版 demo（4 台车、新布局）：
+
+```
+状态驻留（中位）: to_pickup 6.6s · to_dropoff 5.2s · departing 1.4s
+                  loading/unloading 1.2s · waiting_lease 0.2s
+活跃度: 97% 的时间在"行驶+装卸"，idle 仅 3.3%
+抖动:   方向反转 0 次；行驶中 >6 s 的低速片段只有 3 段、共 42 s
+卡死:   0 次 / 0.0%
+```
+
+**租约只用 0.2 s，没有抖动，没有卡死** —— 这一版本身是流畅的。
+（用户看到的"卡死"是更早那版；原因已在第 62/63 节修掉：`escape_election` 与
+0.65 m 净宽。）如果仍觉得不流畅，需要更具体的画面或时刻，我按那个点再查。

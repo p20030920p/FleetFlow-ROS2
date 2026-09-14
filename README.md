@@ -55,7 +55,8 @@ cd FleetFlow-ROS2                         # build from the repo root, not the wo
 colcon build --symlink-install
 source install/setup.bash                 # per-shell; re-run in every new terminal
 
-python3 tools/preflight.py                # checks leftovers, DISPLAY, GL before launching
+python3 tools/preflight.py                # environment: leftovers, DISPLAY, GL
+python3 tools/check_gazebo.py             # three gates: server, GUI, rendering
 
 ros2 launch fleetflow_sim factory.launch.py                  # Gazebo server only
 ros2 launch fleetflow_sim logic_only.launch.py num_robots:=4 policy:=ssi   # no Gazebo
@@ -64,6 +65,12 @@ ros2 launch fleetflow_sim logic_only.launch.py num_robots:=4 policy:=ssi   # no 
 ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=4
 # open http://127.0.0.1:8080 — the board streams on /stream and /map/stream
 ```
+
+`check_gazebo.py` tests the three things that can independently fail, so a failure tells you
+*which* one: the **server** (headless physics, 20 s), the **GUI** (needs `DISPLAY`/`WAYLAND_DISPLAY`
+and a working GL stack — `gz gui` must survive 25 s), and **rendering** (camera images, which
+need `bridge_cameras:=true`). Run it with `--no-gui` on a headless machine. It passes on the
+development machine for all three, so if it fails for you the output names the missing piece.
 
 > **If the Gazebo window force-quits or opens empty**, run `bash tools/gz_reset.sh` first: an
 > orphaned server from a previous `kill -9` will capture the new window. Then run

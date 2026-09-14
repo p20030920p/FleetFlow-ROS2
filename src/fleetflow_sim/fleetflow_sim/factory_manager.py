@@ -508,6 +508,11 @@ def main():
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        # 见 robot_controller.main：关闭时 destroy_node 可能抛异常并刷 Traceback，
+        # 无害但会让人以为启动失败，统一吞掉。
+        try:
+            node.destroy_node()
+        except Exception:                                     # noqa: BLE001
+            pass
         if rclpy.ok():
             rclpy.shutdown()
