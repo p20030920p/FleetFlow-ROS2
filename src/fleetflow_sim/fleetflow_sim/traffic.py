@@ -1209,7 +1209,13 @@ class TrafficLayer:
                 self._log(f"R{rid} stalled {self.get_wait_duration(rid, now):.1f}s, "
                           f"escape from R{closest} (gap={gap:.2f}m)")
             else:
-                self._log(f"R{rid} stalled {self.get_wait_duration(rid, now):.1f}s, replan")
+                # 把 gap 一起打出来：否则只能看到"没触发脱困"，
+                # 却不知道到底是因为身边没人（closest 为 None）还是
+                # 离得还不够近（gap >= 0.30）—— 排查时这两种原因
+                # 指向完全不同的修法，日志里必须先分得开。
+                self._log(f"R{rid} stalled {self.get_wait_duration(rid, now):.1f}s, "
+                          f"replan (nearest={closest} gap="
+                          f"{'inf' if gap == float('inf') else f'{gap:.2f}m'})")
 
     # ================================================================
     #  周期运行

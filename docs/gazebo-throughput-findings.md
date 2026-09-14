@@ -1723,3 +1723,53 @@ ROS 1 那套"等太久 → 反饥饿优先级增益 / 判定让路 / 卡死自�
 
 **仍未解决**：产量方差本身。瓶颈在**拥塞**（同一条路线反复被回收，而同一
 路线其它单正常送达），不在派单、不在工厂供料（下游可收位始终有 2 个空闲）。
+
+## 47. 最深的一个坑：`/robot_i/odom` 的 QoS 不兼容 —— 车**完全不知道自己在哪里**
+
+第 44/45 节修完速度上报后，Gazebo 里出现了新证据。用新增的
+`tools/stall_trace.py`（把 `cmd_vel` 指令和 `RobotStatus` 位姿同周期并列打印）
+取证，看到的却是：
+
+```
+t= 12.0 | R0 to_pickup  v_cmd= 0.85 w= 0.10 spd= 0.00 d_tgt=0.50 ...
+t= 14.0 | R0 departing  v_cmd= 0.85 w=-0.10 spd= 0.00 d_tgt=4.61 ...
+```
+
+**指令一直是非零，而 `d_tgt` 在两秒内从 0.50 跳到 4.61，速度却恒为 0.00。**
+这只能是位姿本身出了问题。接着用 `ros2 topic info -v` 对 `/robot_0/odom`
+取证，一眼看到根因：
+
+```
+Publisher:    ros_gz_bridge   Reliability: RELIABLE
+Subscription: robot_controller  Reliability: BEST_EFFORT   <-- 不兼容
+```
+
+DDS 规则：**RELIABLE 发布者 + BEST_EFFORT 订阅者 = QoS 不兼容，一条都收不到。**
+`qos.py` 里 `sensor_qos()` 用的是 BEST_EFFORT（名字叫 sensor，就默认"高频丢帧无所谓"），
+而 `ros_gz_bridge` 出来的 `/robot_i/odom` 和 `/scan` 都是 RELIABLE。
+
+这条坑以前只修过一半：第 200 多行那段注释记录了 scan 收不到帧的问题，
+当时的修法是"让 rclpy 侧订阅改成 RELIABLE"，**但没有回头检查 odom
+是不是同一个病**。于是 odom 一直静默失聪，后果是灾难性的：
+
+* `on_odom` 永不触发 → `self.x/self.y/self.yaw` 停留在出生点，
+  **控制器、规划器、纯追踪、交通协调层全部建立在出生点上**；
+* `_meas_speed`（第 44 节的位姿差分）恒为 0 → 协调层判定**所有车永久停车**
+  → 超过 `PERSISTENT_STALL_HORIZON=8 s` 后全员触发 `stalled_replan`。
+  实测一次 300 s 的 Gazebo 运行里打了 **96~232 次假卡死**，
+  车被反复要求重规划、原地打转（trace 里满地 `w=1.20, v=0.00`）。
+* 车其实在物理世界里被驱动着乱走（有轮速就动），但**所有上层逻辑都以为
+  它还在出生点** —— 这正是"跑着跑着全线停摆"的最终解释。
+
+**修法**：`sensor_qos()` 的可靠性改为 `RELIABLE`。名字里的 sensor 指的是
+"允许丢帧、队列浅"，**不代表可以用 BEST_EFFORT** —— 能不能用 best-effort
+取决于**发布端**，而本项目的发布端是 `ros_gz_bridge`，它是 RELIABLE。
+修完复测：`R1` 的 `d_tgt` 由 9.43 正常收敛到 0.37，之前的"全员永久卡死"消失。
+
+### 教训
+
+"同一个坑修一半"比不修更贵：scan 的 QoS 问题当初已经定位并写下结论，
+却因为只改了 scan 那一个订阅点，让 odom 带着同一个病又活了很久，
+并且伪装成了完全不同的症状（吞吐低、假卡死、车原地打转）。
+凡是**同一类**的缺陷，必须把**同类订阅点全部过一遍**，
+而不是修掉症状最明显的那个。
