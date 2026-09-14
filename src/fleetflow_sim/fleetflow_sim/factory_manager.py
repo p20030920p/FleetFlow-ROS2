@@ -75,6 +75,10 @@ class FactoryManager(Node):
         # 任务在途超过这么久没有推进就回收（秒）。没有这个兜底，
         # 一辆卡住的车会把派单预算永久占死 —— 见 in_flight 的注释。
         self.declare_parameter("stale_task_timeout_s", 45.0)
+        # 投料 / 推进的派单优先级（第 55 节）。
+        #   True（默认）= 先推进完工位，再投料新桶
+        #   False        = 旧行为，先投料（实测会把在途额度吃满，饿死推进）
+        self.declare_parameter("advance_first", True)
 
         self.stations: dict[str, Station] = {}
         for key, z in layout.STORAGE.items():
@@ -116,6 +120,7 @@ class FactoryManager(Node):
         self.pub_task_status = self.create_publisher(TransportTask, "/factory/task_status", 20)
         self.create_subscription(Int32, "/factory/completed", self.on_completed, 20)
         self.create_subscription(TransportTask, "/factory/task_status", self.on_task_status, 20)
+        self.advance_first = bool(self.get_parameter("advance_first").value)
         self.get_logger().info(f"pipeline at start: {self.pipeline_snapshot()}")
         # 每 10 s 打一行管线水位（INFO，所以默认就能看到）：
         # 这是解释"为什么这次只跑了 12 单"的唯一现场记录。
@@ -305,21 +310,37 @@ class FactoryManager(Node):
 
     def _spawn_transports(self):
         limit = int(self.get_parameter("max_tasks_in_flight").value)
+        if self.advance_first:
+            self._spawn_advance(limit)
+            self._spawn_inject(limit)
+        else:
+            self._spawn_inject(limit)
+            self._spawn_advance(limit)
 
-        # 1) 空桶区 → 梳棉等料位
-        #    取货点不再是料区中心，而是环绕料区的空闲停靠位，避免所有车挤同一个点
-        for mid, mat in list(self.materials.items()):
-            if self.in_flight >= limit:
-                return
-            if mat.where != "storage_empty":
-                continue
-            dock = self._free_slot("storage_empty_slot_")
-            dst = self._free_slot("carding_waiting_")
-            if dock is None or dst is None:
-                continue
-            self._emit_task(mid, dock, dst)
+    def _spawn_advance(self, limit):
+        """完工位 → 下一段等料位（最后一段 → 红料区）。"""
 
-        # 2) 某段完工位 → 下一段等料位；最后一段 → 红料区
+        # ---------------------------------------------------------------
+        # **顺序就是优先级，而原来的顺序是反的。**
+        #
+        # 旧写法把"空筒区 → 梳棉等料位"（以下称**投料**）放在第 1 段，
+        # 把"完工位 → 下一段等料位"（以下称**推进**）放在第 2 段。
+        # 而两段开头都有 `if self.in_flight >= limit: return` ——
+        # 于是只要有空筒取放位和空的梳棉等料位，投料就会把在途额度**吃满**，
+        # 第 2 段永远轮不到。实测（第 55 节）：
+        #
+        #     storage_empty → carding   派单 25 次
+        #     carding_finished → drawing 派单 11 次，其中只有 1 单真正送到
+        #
+        # 结果是产线**只进不出**：物料一批批灌进梳棉，却卡在完工位上运不走，
+        # 整场 180 s 只做出 1~4 件成品。反映在账上就是"总送达 34 单、
+        # 其中 17 单是投料、成品只有 4 件"。
+        #
+        # 现在把顺序倒过来：**先推进、后投料**。物料在产线里往前走才是
+        # 产出，投料只是喂料；喂料不该挤掉推进。
+        # ---------------------------------------------------------------
+
+        # 1) 某段完工位 → 下一段等料位；最后一段 → 红料区
         for mat in list(self.materials.values()):
             if self.in_flight >= limit:
                 return
@@ -334,6 +355,22 @@ class FactoryManager(Node):
             if dst is None:
                 continue
             self._emit_task(mat.mid, src, dst)
+
+    def _spawn_inject(self, limit):
+        """空桶区 → 梳棉等料位。
+
+        取货点不再是料区中心，而是环绕料区的空闲停靠位，避免所有车挤同一个点。
+        """
+        for mid, mat in list(self.materials.items()):
+            if self.in_flight >= limit:
+                return
+            if mat.where != "storage_empty":
+                continue
+            dock = self._free_slot("storage_empty_slot_")
+            dst = self._free_slot("carding_waiting_")
+            if dock is None or dst is None:
+                continue
+            self._emit_task(mid, dock, dst)
 
     def reannounce(self):
         """真实车队里任务公告是周期性的；这里重播所有 status=pending 的任务，

@@ -159,6 +159,7 @@ def generate_launch_description():
              parameters=[dict(num_materials=LaunchConfiguration("num_materials"),
                               max_tasks_in_flight=LaunchConfiguration("max_tasks_in_flight"),
                               stale_task_timeout_s=LaunchConfiguration("stale_task_timeout"),
+                              advance_first=LaunchConfiguration("advance_first"),
                               use_sim_time=use_sim_time)]),
         Node(package=PKG, executable="traffic_manager", name="traffic_manager", output="screen",
 
@@ -210,6 +211,8 @@ def generate_launch_description():
         DeclareLaunchArgument("collision_criterion", default_value="outline",
                               description="outline=轮廓净距（默认）；centre=旧车心距判据（对照实验用）"),
         DeclareLaunchArgument("cancel_on_factory", default_value="true"),
+        DeclareLaunchArgument("advance_first", default_value="true",
+                              description="先推进完工位再投料（false = 旧顺序）"),
         DeclareLaunchArgument("empty_slots", default_value="4",
                               description="空筒取放位数量（= 喂料并发上限），4~8"),
         DeclareLaunchArgument("escape_election", default_value="true"),

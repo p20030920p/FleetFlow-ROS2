@@ -38,6 +38,7 @@ def _spawn(context, *args, **kwargs):
 Node(package=PKG, executable="factory_manager", name="factory_manager", output="screen",
              parameters=[dict(num_materials=materials,
                               stale_task_timeout_s=float(LaunchConfiguration("stale_task_timeout").perform(context)),
+                              advance_first=LaunchConfiguration("advance_first").perform(context).lower() == "true",
                               max_tasks_in_flight=int(LaunchConfiguration("max_tasks_in_flight").perform(context)))]),
         Node(package=PKG, executable="traffic_manager", name="traffic_manager", output="screen",
              parameters=[dict(stall_horizon_s=float(
@@ -79,6 +80,8 @@ def generate_launch_description():
         DeclareLaunchArgument("stuck_timeout", default_value="10.0"),
         DeclareLaunchArgument("battery_drain", default_value="0.55"),
         DeclareLaunchArgument("cancel_on_factory", default_value="true"),
+        DeclareLaunchArgument("advance_first", default_value="true",
+                              description="先推进完工位再投料（false = 旧顺序）"),
         DeclareLaunchArgument("empty_slots", default_value="4",
                               description="空筒取放位数量（= 喂料并发上限），4~8"),
         DeclareLaunchArgument("escape_election", default_value="true"),
