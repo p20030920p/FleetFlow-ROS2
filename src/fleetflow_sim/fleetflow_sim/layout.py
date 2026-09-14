@@ -47,6 +47,25 @@ STORAGE_SLOTS = {
     "red":   dict(x=22.95, ys=[5.5, 8.0, 10.5]),
 }
 
+# 空筒取放位数量上限（第 52 节）。
+#
+# 这是全厂**喂料并发**的硬上限：工厂的取货点是"环绕料区的空闲停靠位"，
+# 每个位一次只放 1 件，所以开局最多只能并发 4 单，之后每有一件走到下一
+# 工序才腾出空位、放一件新料。实测 4 台车 300 s 只做出 16~22 件，
+# 而 16 件物料里结束时还有 12 件躺在库里 —— 说明**产量主要卡在喂料并发**，
+# 不在车队。做成可调参数是为了能直接验证这句话：翻倍之后产量该上去。
+EMPTY_SLOT_YS = [3.0, 6.0, 9.0, 12.0]
+EXTRA_EMPTY_SLOT_YS = [4.5, 7.5, 10.5, 13.5]      # 与上面交错，避免并排过近
+EMPTY_SLOTS_MAX = 8
+
+
+def empty_slot_ys(n: int) -> list[float]:
+    """按需要的取放位数量给出 y 坐标（4 个 -> 原布局，8 个 -> 交错铺满）。"""
+    n = max(1, min(int(n), EMPTY_SLOTS_MAX))
+    if n <= len(EMPTY_SLOT_YS):
+        return EMPTY_SLOT_YS[:n]
+    return sorted(EMPTY_SLOT_YS + EXTRA_EMPTY_SLOT_YS[: n - len(EMPTY_SLOT_YS)])
+
 # 充电位：机柜贴墙，AGV 停在机柜前方的停靠点
 CHARGER_CABINET_DY = -0.85          # 机柜相对停靠点的偏移（贴向下墙）
 CHARGERS = {

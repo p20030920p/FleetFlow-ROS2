@@ -169,7 +169,7 @@ dominates every other term and the auction degenerates to FIFO.
 > by a factor of two. Evidence and the failed attempts:
 > [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
 
-![Live dashboard, two AGVs working](assets/readme/live-board-2agv.png)
+![Live dashboard, four AGVs working](assets/readme/live-board-4agv.png)
 
 *Live board from Gazebo — `web:=true`, then `http://127.0.0.1:8080`, streamed on `/stream` and `/map/stream`.*
 
@@ -244,40 +244,44 @@ the average. Both are kept; neither is claimed to pay for itself here.
 | Event-driven re-planning | Only when a peer occupies the next 2.2 m of the path — a timer resets pure pursuit mid-turn and the vehicle oscillates in place. |
 | Collision test | Oriented rectangles against each other (separating-axis), not centre distance. See below. |
 
-4 AGVs, 200 s wall clock: **35 tasks dispatched, 5 delivered, 0 errors, 0 watchdog aborts, 0 "no path",
-free memory never below 6.9 GB.**
+4 AGVs, 300 s wall clock, six Gazebo runs, everything enabled: **16 · 10 · 13 · 14 · 22 · 18 units
+delivered, zero hull intersections, zero false stalls, no crashes.** The spread across identical
+commands is the honest part of that line: output varies about twofold.
 
 **Why centre distance is the wrong test.** The body is 0.56 × 0.44 m: two vehicles need 0.44 m
 centre distance side by side, 0.56 m nose to tail, and 0.712 m to be safe at *any* orientation. The
 code used 0.34 m and applied it only inside a ±52° front cone, so it commanded vehicles into each
 other and ignored anything off to the side. Gazebo showed it — 1900 overlap events, closest approach
-0.259 m. It is now a separating-axis test between the two oriented rectangles: **0 intersecting
-frames, closest approach 0.83 m.**
+0.259 m. It is now a separating-axis test between the two oriented rectangles.
 
-**Fixing it exposed the next problem, which is the honest headline of this section.** With collisions
-actually prevented the mill jams:
+**Two root causes found this round, both invisible from the logs.**
 
-| Avoidance | Tasks | Delivered | Overlaps |
-|---|---:|---:|---:|
-| centre distance, 0.34 m cone (wrong) | 135 | **130** | 1900 |
-| oriented rectangles, loose yielding | 19 | 12 | 0 |
-| oriented rectangles, experiment thresholds | 5 | 1 | 0 |
+The first: `/robot_i/odom` had incompatible QoS. The bridge publishes RELIABLE, the controller
+subscribed BEST_EFFORT, and under DDS that pair delivers *nothing* — not fewer frames, none. Every
+layer above the driver therefore reasoned about a robot that had not moved since spawn, and the
+pose-difference speed derived from it was identically zero, so the coordinator concluded the whole
+fleet was permanently stopped and fired 96–232 false stall recoveries per run. After the fix, four
+robots roughly doubled their output and false stalls went to zero.
 
-The 130-delivery run was only productive *because* vehicles pushed through each other. The reactive
-layer — reciprocal yielding plus docking leases — is not enough at this load; aisles need reservations
-the way docks already have them. Until that exists, Gazebo is not a usable throughput demonstrator,
-and the animation at the top of this page is a wall-clock run in which vehicles pass closer than their
-bodies would allow under physics.
+The second: the coordinator judged "is this robot stopped?" from the *last commanded* velocity. A
+robot that stops stops being commanded, so the field froze at its pre-stop value and an idle vehicle
+reported 0.85 m/s. Wait detection, anti-starvation priority and yield decisions were all dead code
+while the fleet was actually blocked.
 
-**Resolved — the chassis does reproduce commanded motion.** The earlier note here said `cmd_vel` at
-0.5 m/s advanced only 0.17 m in 15 s and blamed the wheel/ground contact model. Re-measured in the factory
-world with the ROS bridge out of the way, a commanded 0.6 m/s over 8 s moves the robot 4.085 m natively and
-3.952 m through ROS — 85 % and 82 % of the ideal, which is ordinary acceleration and settling. Contact,
-friction and bridging are all sound; the physics note above is retracted.
+**What limits Gazebo is partly not the fleet.** Only four empty-can docking slots exist, so at most
+four tasks can start concurrently and a new can enters only when one advances a stage. A dashboard
+capture at the end of a run showed 12 of 16 cans still in the store. The deliveries-per-minute
+figure therefore mixes can supply, the plant's internal rate (about 8 finished units/min, set by the
+middle stage) and transport. Fleet-size comparisons remain valid because all arms share that supply
+limit, but the absolute number is not a measure of fleet capability.
 
-What actually limits Gazebo is the cost of meeting, not physics: a 1.45 m aisle against a
-1.04 m passing requirement means contention climbs steeply with density — see the table under
-*Results*.
+**Retracted.** An earlier version of this section concluded that Gazebo was not a usable throughput
+demonstrator and that the chassis did not reproduce commanded motion. Both were wrong. A commanded
+0.6 m/s over 8 s moves 4.085 m natively and 3.952 m through ROS — 85 % and 82 % of ideal, ordinary
+acceleration and settling — and the real faults were the QoS mismatch and the speed reporting above.
+
+The animation at the top of this page predates those fixes, so its vehicles pass closer than physics
+now permits.
 
 ---
 
