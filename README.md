@@ -37,7 +37,7 @@ assigns the work, each vehicle plans and drives its own route, and a shift board
 
 | | |
 |---|---|
-| **Allocation** — 8 AGVs, identical plant | CA-SSI **18.7** tasks/min · SSI 15.2 · random 10.6 |
+| **Allocation** — identical plant, measured at 8 AGVs | CA-SSI **18.7** tasks/min · SSI 15.2 · random 10.6 |
 | **Before → after** | **+23 %** throughput · **−16 %** m/task · **−53 %** near-miss |
 | **What carries the cost model** | dock contention (**−20 %** if removed) · energy feasibility (**−16 %**) |
 | **Single-round optimum** | `hungarian` never wins — 14.9 vs 18.7 |
@@ -352,7 +352,7 @@ python3 tools/run_experiments.py --policies random nearest ssi ca_ssi hungarian 
     --seeds 1 2 3 --seconds 120 --robots 3 --drain 0.10 --out experiments/saturated \
     --extra max_tasks_in_flight:=18 num_materials:=80
 python3 tools/run_experiments.py --policies random nearest ssi ca_ssi hungarian \
-    --seeds 1 2 3 --seconds 120 --robots 8 --drain 0.10 --out experiments/slack \
+    --seeds 1 2 3 --seconds 120 --robots 8 --drain 0.10 --out experiments/slack \   # study scale
     --extra max_tasks_in_flight:=18 num_materials:=80
 python3 tools/run_experiments.py \
     --policies ca_ssi ca_nocong ca_noener ca_nobal ca_noage \

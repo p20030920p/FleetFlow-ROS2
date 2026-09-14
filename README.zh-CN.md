@@ -34,7 +34,7 @@
 
 | | |
 |---|---|
-| **分配** —— 8 台车、同一座工厂 | CA-SSI **18.7** 件/分 · SSI 15.2 · random 10.6 |
+| **分配** —— 同一座工厂（该研究测于 8 台车） | CA-SSI **18.7** 件/分 · SSI 15.2 · random 10.6 |
 | **改进前 → 改进后** | 吞吐 **+23 %** · 单任务里程 **−16 %** · 近距事件 **−53 %** |
 | **谁在扛代价模型** | 工位拥塞（去掉 **−20 %**）· 电量可达（去掉 **−16 %**） |
 | **单轮最优** | `hungarian` 从不获胜 —— 14.9 对 18.7 |
@@ -320,7 +320,7 @@ python3 tools/run_experiments.py --policies random nearest ssi ca_ssi hungarian 
     --seeds 1 2 3 --seconds 120 --robots 3 --drain 0.10 --out experiments/saturated \
     --extra max_tasks_in_flight:=18 num_materials:=80
 python3 tools/run_experiments.py --policies random nearest ssi ca_ssi hungarian \
-    --seeds 1 2 3 --seconds 120 --robots 8 --drain 0.10 --out experiments/slack \
+    --seeds 1 2 3 --seconds 120 --robots 8 --drain 0.10 --out experiments/slack \   # 该研究原始规模
     --extra max_tasks_in_flight:=18 num_materials:=80
 python3 tools/run_experiments.py \
     --policies ca_ssi ca_nocong ca_noener ca_nobal ca_noage \
