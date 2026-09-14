@@ -169,10 +169,8 @@ dominates every other term and the auction degenerates to FIFO.
 | 8 | 4 · 7 · 9 | 0.7–1.7 | 0 · 0 · 2 |
 
 > **Eight robots deliver half of what four do.** Yields jump from single digits to 42–87, so
-> the larger fleet is not busier — it spends most of its time giving way. The plant is
-> 26 × 16 m with a 1.45 m aisle against a 1.04 m passing requirement, so the margin is thin
-> and the cost of meeting rises faster than the added capacity. **Four robots are the
-> economic fleet for this layout.**
+> the larger fleet is not busier — it spends most of its time giving way. **Four robots are the
+> economic fleet for this layout.** Note that the constraint is not the fleet: see below.
 >
 > **What the column counts.** These are *transport operations* - one move of material from A to
 > B - not finished products. A finished unit needs five or more of them, so product counts are
@@ -191,23 +189,22 @@ dominates every other term and the auction degenerates to FIFO.
 > by a factor of two. Evidence and the failed attempts:
 > [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
 
-**Where the plant actually loses its time.** Five independent measurements now agree. Fleet size
-does not matter — 8 robots deliver roughly what 4 do. Docking-slot count does not matter. A larger
-in-flight cap is *worse*. A single delivery takes only 22 s. And yet a run finishes 16–41 transport
-operations while logging 194–361 escape manoeuvres, worst stall 88–210 s: far more time goes into
-extracting robots from each other than into moving material, so machines sit **starved 76–100 %** of
-the time and **blocked 0 %** — they are not full, they are empty, because nothing arrives.
+**Where the plant actually loses its time.** A trajectory probe settles this, and it corrects an
+earlier reading of mine. Eight robots over 240 s spend **52 % of their time idle** — so the fleet is
+not blocked, and the aisle is not the limiter. A single delivery has a median latency of 13 s. What
+collapses is the line: 17 loads reach carding, 8 reach drawing, 2 reach roving, 2 finish, because a
+unit must pass processing, waiting, transport and waiting again at every stage, and about twelve are
+in process at once — a ceiling near 5 units/min against 4.6–5.5 measured.
 
-The cause is the 1.45 m aisle against a 1.04 m passing requirement, the same defect sections 36–42
-chased through the avoidance layer. Four rounds of tuning the fleet, the scheduler and the escape
-rules all came back negative, so the next step is to change the aisle rather than the rules: widen it,
-add passing bays so a yielding robot has somewhere to go, or make it a one-way loop. Parking the
-yielding robot in place, which was measured this round, made stalls twice as bad — avoidance rules
-alone cannot manufacture throughput.
+Congestion is real but secondary: low-speed time clusters at the storage→carding, carding→drawing and
+drawing→roving lanes (the last contains a 0.65 m pinch). The lever is **buffer capacity at each
+stage**, not aisle width — the work-in-process count sets the ceiling directly, and widening an aisle
+does not raise it while half the fleet sits idle. Fleet size, docking-slot count and a larger
+in-flight cap were all measured and none of them helps.
 
 ![Live dashboard, four AGVs working](assets/readme/live-board-4agv.png)
 
-*Live board from Gazebo — `web:=true`, then `http://127.0.0.1:8080`, streamed on `/stream` and `/map/stream`.*
+*Live board from Gazebo — `web:=true`, then `http://127.0.0.1:8080`; `/stream` and `/map/stream` are multipart streams carrying PNG frames.*
 
 5 policies × 3 seeds × 120 s, 80 units in circulation, identical plant — only the fleet differs.
 
