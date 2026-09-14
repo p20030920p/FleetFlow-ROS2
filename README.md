@@ -22,16 +22,15 @@
 *One cycle, dispatch to delivery. Solid line = covered, dashed = remaining plan. The aisle
 pallets are static obstacles in the A\* cost map.*
 
-> **Recorded 2026-09-14** from the current build: 8 AGVs and 24 units in the logic stack, the
+> **Recorded 2026-09-14** from the current build: 4 AGVs and 24 units in the logic stack, the
 > 60 s with the most fleet displacement out of a 220 s run, 90 frames, rendered offscreen. Motion
 > here is ideal kinematics, not Gazebo contact.
 >
-> **This configuration was chosen to minimise vehicles freezing, and freezing is not eliminated.**
-> Over the full 220 s, 27 stall episodes total 381 s, about 22 % of fleet time, clustered in front
-> of the carding and drawing berths. The rendered window holds two episodes (10 %); the window is
-> picked for activity, not for being stall-free. Turning off `escape_election` cut stalls from
-> 15.2 % to 3.6 % in a controlled comparison, and 8 AGVs with 24 units was the best of four
-> configurations tested - but berth contention, not the aisle, remains the unresolved cause.
+> **No vehicle freezes in this capture.** An earlier recording did freeze, and the cause was the
+> plant model, not the fleet: the gap between the drawing finished berth and the roving waiting
+> berth was **0.65 m**, against a **0.74 m** requirement for two vehicles to pass. One vehicle
+> docking there blocked the lane permanently. Stage spacing is now **2.0 m** and the measured
+> stall share is zero; the comparison is in [Stability](#stability).
 
 Five AGVs move cans between carding, drawing and roving machines on a 26 × 16 m floor. A scheduler
 assigns the work, each vehicle plans and drives its own route, and a shift board reports the floor.
@@ -59,7 +58,7 @@ source install/setup.bash                 # per-shell; re-run in every new termi
 python3 tools/preflight.py                # checks leftovers, DISPLAY, GL before launching
 
 ros2 launch fleetflow_sim factory.launch.py                  # Gazebo server only
-ros2 launch fleetflow_sim logic_only.launch.py num_robots:=8 policy:=ssi   # no Gazebo
+ros2 launch fleetflow_sim logic_only.launch.py num_robots:=4 policy:=ssi   # no Gazebo
 
 # Gazebo GUI and the floor plan live in a browser, side by side
 ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=4
@@ -208,6 +207,26 @@ stage**, not aisle width — the work-in-process count sets the ceiling directly
 does not raise it while half the fleet sits idle. Fleet size, docking-slot count and a larger
 in-flight cap were all measured and none of them helps.
 
+**The deadlock was the plant model, and it is fixed.** Vehicles froze in the aisle in front of the
+berths. The cause was geometric: the gap between the drawing finished berth and the roving waiting
+berth was **0.65 m**, while two vehicles need **0.44 + 2 × 0.05 = 0.74 m** of hull clearance to pass.
+One vehicle docking there blocked the lane permanently, and the fleet queued up behind it. The ROS 1
+plant never showed this because its machines are only 0.8 × 0.8 m in a 12 × 10 m hall — not more
+space, but far more open floor per vehicle.
+
+Stage spacing is now a parameter (`stage_gap`, default **2.0 m**) and the effect is a clean
+threshold, measured with 4 AGVs over 200 s:
+
+| Stage gap | Stall share of fleet time |
+|---:|---:|
+| **0.65 m** (below the 0.74 m passing requirement) | **13.2 %** |
+| 1.20 m | 0.0 % |
+| 2.00 m (default) | 0.0 % |
+| 3.00 m | 0.0 % |
+
+Three further 200 s runs at the default gap also measured zero. The demo above is recorded with the
+default, so it contains no freezes.
+
 ![Live dashboard, four AGVs working](assets/readme/live-board-4agv.png)
 
 *Live board from Gazebo — `web:=true`, then `http://127.0.0.1:8080`; `/stream` and `/map/stream` are multipart streams carrying PNG frames.*
@@ -256,7 +275,8 @@ Each term removed on its own; same auction, seeds and plant.
 
 ![Leave-one-out ablation of the six cost terms](assets/readme/ablation.png)
 
-*8 AGVs, 3 seeds, 80 units.*
+*Measured at 8 AGVs, 3 seeds, 80 units — the scale the allocation study was run at, kept for
+that reason. Current default is 4 AGVs.*
 
 | Cost model | tasks/min | vs full | m/task |
 |---|---:|---:|---:|

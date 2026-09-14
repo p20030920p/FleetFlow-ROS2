@@ -49,7 +49,6 @@ class MetricsRecorder(Node):
         self.declare_parameter("out_dir", "/tmp/fleetflow_metrics")
         self.declare_parameter("policy", "nearest")
         self.declare_parameter("run_label", "run")
-        self.declare_parameter("num_robots", 0)
         self.declare_parameter("near_miss_m", 0.55)
 
         self.out_dir = str(self.get_parameter("out_dir").value)

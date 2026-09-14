@@ -284,7 +284,6 @@ class Dashboard(Node):
         self.declare_parameter("out_dir", "/tmp/fleetflow_frames")
         self.declare_parameter("every_s", 0.0)     # >0 则定时出图
         self.declare_parameter("once", False)
-        self.declare_parameter("num_robots", 8)
 
         self.out_dir = self.get_parameter("out_dir").value
         self.robots: dict[int, RobotStatus] = {}

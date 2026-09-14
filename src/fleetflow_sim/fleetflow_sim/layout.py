@@ -33,6 +33,73 @@ STAGES = [
          machine_x=18.70, wait_x=17.85, done_x=22.30, process_s=9.0),
 ]
 
+# ---------------------------------------------------------------- 工序间距
+#
+# **这是"小车卡死"的根因所在**（findings 第 63 节）。
+#
+# 原布局里相邻工序的"上一段完工位"与"下一段等料位"挨得很近：
+#   梳棉完工位 x=11.55 → 并条等料位 x=12.75   净宽 1.20 m
+#   并条完工位 x=17.20 → 粗纱等料位 x=17.85   净宽 0.65 m   <-- 比车还窄
+# 而两台车交会需要 0.44 + 2×0.05 = **0.74 m 轮廓净距**。
+# 0.65 m 那条通道**物理上过不去两台车**：一台进去卸货，另一台就永远等在那儿；
+# 若两台同时进入，双方都无法退出 —— 这就是 demo 里看到的死锁。
+#
+# 对照 ROS 1：那套世界的机器只有 **0.8×0.8 m**（见
+# multy-robot/src/smart_factory_sim/worlds/smart_factory.world），
+# 厂房仅 12×10 m 却几乎不堵 —— 不是因为地方大，而是因为**障碍物小、
+# 每段之间的空地远大于车宽**。所以正确的改法不是把厂房扩得更大，
+# 而是把**工序间的净宽**拉开到超过会车需求并留出余量。
+#
+# 现在按"每段净宽 >= STAGE_GAP（默认 2.0 m）"重排：
+#   梳棉完工位 12.50 → 并条等料位 14.50   净宽 2.00 m
+#   并条完工位 19.50 → 粗纱等料位 21.50   净宽 2.00 m
+# 2.0 m 对 0.74 m 的会车需求有 2.7 倍余量，一台车停靠时另一台可以绕过。
+STAGE_GAP = 2.00                 # 相邻工序之间的净宽（米）
+_BASE_WAIT_X = 5.55              # 梳棉等料位（西端基准，不动）
+_CARDING_MACHINE_DX = 1.45       # 等料位 → 机器中心
+_CARDING_DONE_DX = 6.00          # 等料位 → 完工位
+_STAGE_MACHINE_DX = 0.85         # 等料位 → 机器中心
+_STAGE_DONE_DX = 4.45            # 等料位 → 完工位
+
+
+def _stage_waits(gap: float = None) -> list[float]:
+    """按给定净宽算出各工序的 wait_x（西端对齐，向东逐段排开）。"""
+    gap = STAGE_GAP if gap is None else float(gap)
+    waits = [_BASE_WAIT_X]
+    for _ in STAGES[1:]:
+        waits.append(waits[-1] + _CARDING_DONE_DX + gap)
+    return waits
+
+
+def set_stage_gap(gap: float) -> float:
+    """改工序间净宽并重建所有派生坐标（机器、完工位、料区、待命区）。
+
+    必须在**节点构造之前**调用 —— 与 `set_empty_slots` 同样的理由：
+    工位点是模块级数据，节点构造时就被读走了。见 `tools/preflight.py` 与
+    `bootstrap()`。
+    """
+    global STAGE_GAP
+    gap = max(0.80, float(gap))
+    STAGE_GAP = gap
+    waits = _stage_waits(gap)
+    for i, s in enumerate(STAGES):
+        s["wait_x"] = waits[i]
+        if i == 0:
+            s["machine_x"] = waits[i] + _CARDING_MACHINE_DX
+            s["done_x"] = waits[i] + _CARDING_DONE_DX
+        else:
+            s["machine_x"] = waits[i] + _STAGE_MACHINE_DX
+            s["done_x"] = waits[i] + _STAGE_DONE_DX
+    # 派生：成品库取放位贴在粗纱完工位外侧；空筒库取放位与梳棉等料位同高
+    # 红料区取放位与粗纱完工位之间同样要能会车，留 1.80 m（原来只有 0.65 m）
+    STORAGE_SLOTS["red"]["x"] = STAGES[-1]["done_x"] + 1.80
+    STORAGE["red"]["x"] = STORAGE_SLOTS["red"]["x"] + 1.50
+    _rebuild_park()
+    _rebuild_slot_points()
+    _rebuild_park()
+    return gap
+
+
 # 储料区：货架贴墙，取放位在货架前的通道
 RACK = dict(w=1.10, h=2.40, depth=1.90)
 # 只有"空筒库"与"粗纱成品库"是任务的起终点；中间工序的缓存就是各自的完工位。
@@ -104,6 +171,13 @@ STORAGE_SLOT_POINTS = {
 }
 
 
+def _rebuild_park():
+    """待命排随厂房宽度居中（粗纱/红料位会因净宽调整而东移）。"""
+    east = STORAGE["red"]["x"] + RACK["depth"] / 2
+    PARK["x0"] = max(9.60, (east - 1.0 - PARK["dx"] * (PARK["n"] - 1)) / 2
+                     + PARK["dx"] * (PARK["n"] - 1) * 0.25)
+
+
 def _rebuild_slot_points():
     STORAGE_SLOT_POINTS.clear()
     for zone, spec in STORAGE_SLOTS.items():
@@ -135,6 +209,13 @@ def bootstrap() -> int:
     不设则用默认的 4 个，与历史行为完全一致。
     """
     import os
+    # 工序净宽：决定通道能不能会车，是"卡死"的关键参数
+    gap_raw = os.environ.get("FLEETFLOW_STAGE_GAP", "").strip()
+    if gap_raw:
+        try:
+            set_stage_gap(float(gap_raw))
+        except ValueError:
+            pass
     raw = os.environ.get("FLEETFLOW_EMPTY_SLOTS", "").strip()
     if not raw:
         return len(STORAGE_SLOTS["empty"]["ys"])
@@ -143,6 +224,13 @@ def bootstrap() -> int:
     except ValueError:
         return len(STORAGE_SLOTS["empty"]["ys"])
 
+
+
+# ---- 用新的默认净宽重建一次派生坐标 ----
+# 必须放在所有模块级常量定义**之后**：set_stage_gap 会改 STORAGE /
+# STORAGE_SLOTS / PARK，早于它们定义就会 NameError。
+# 这一步让"新布局"成为默认行为，而不是只在设了环境变量时才生效。
+set_stage_gap(STAGE_GAP)
 
 
 def machine_rect(stage: str, lane: int):

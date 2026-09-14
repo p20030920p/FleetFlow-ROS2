@@ -155,6 +155,8 @@ def generate_launch_description():
         # 必须在节点构造前设好：布局（取放位）是模块级数据，节点构造时就被读走
         SetEnvironmentVariable("FLEETFLOW_EMPTY_SLOTS",
                                LaunchConfiguration("empty_slots")),
+        SetEnvironmentVariable("FLEETFLOW_STAGE_GAP",
+                               LaunchConfiguration("stage_gap")),
         Node(package=PKG, executable="factory_manager", name="factory_manager", output="screen",
              parameters=[dict(num_materials=LaunchConfiguration("num_materials"),
                               max_tasks_in_flight=LaunchConfiguration("max_tasks_in_flight"),
@@ -213,6 +215,8 @@ def generate_launch_description():
         DeclareLaunchArgument("cancel_on_factory", default_value="true"),
         DeclareLaunchArgument("advance_first", default_value="false",
                               description="先推进完工位再投料（false = 旧顺序）"),
+        DeclareLaunchArgument("stage_gap", default_value="2.0",
+                              description="相邻工序之间的净宽（米）；0.65 是旧布局，会死锁"),
         DeclareLaunchArgument("empty_slots", default_value="4",
                               description="空筒取放位数量（= 喂料并发上限），4~8"),
         # 默认 false：实测"让一台车原地让位"会把通道堵死，
