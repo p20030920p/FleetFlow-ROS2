@@ -116,6 +116,10 @@ class FactoryManager(Node):
         self.pub_task_status = self.create_publisher(TransportTask, "/factory/task_status", 20)
         self.create_subscription(Int32, "/factory/completed", self.on_completed, 20)
         self.create_subscription(TransportTask, "/factory/task_status", self.on_task_status, 20)
+        self.get_logger().info(f"pipeline at start: {self.pipeline_snapshot()}")
+        # 每 10 s 打一行管线水位（INFO，所以默认就能看到）：
+        # 这是解释"为什么这次只跑了 12 单"的唯一现场记录。
+        self.create_timer(10.0, self.log_pipeline)
 
         hz = float(self.get_parameter("tick_hz").value)
         self.create_timer(1.0 / hz, self.tick)
@@ -236,6 +240,51 @@ class FactoryManager(Node):
             m.holding = None
             m.done_count += 1
 
+    def pipeline_snapshot(self) -> dict:
+        """物料此刻"堆在哪一段"，用来解释吞吐抖动。
+
+        第 42 节量到一件反直觉的事：等待派单的时间几乎是 0
+        （mean=0.0s, max=0.1s），派单本身从来不是瓶颈；而不同运行的
+        产出从 12 单到 36 单差 3 倍，运输时间却是稳定的 18~21 s。
+        差值只能来自**工厂往里放料的速率**。
+
+        这正是布局决定的结构性上限：
+          * 只有 `*_finished_*` 上的物料才会被派单运输；
+          * 一台机器只有在自己的 `waiting` 位空着时才吃料；
+          * 而每台机器的 `finished` 位只有一个。
+        所以如果下一工序的 waiting 位被占满，上一工序的 finished 位
+        就会堵住、机器停转、任务流断供 —— 表现为"跑着跑着没单了"。
+        """
+        at = {"waiting": 0, "finished": 0, "machine": 0, "storage": 0}
+        for mat in self.materials.values():
+            name = mat.where or ""
+            if name.startswith("storage_"):
+                at["storage"] += 1
+            elif "_waiting_" in name:
+                at["waiting"] += 1
+            elif "_finished_" in name:
+                at["finished"] += 1
+        for m in self.machines:
+            if m.holding is not None:
+                at["machine"] += 1
+        # 每个下一工序还剩几个 waiting 位可收（= 还能放多少料进去）
+        room = {}
+        names = [x["name"] for x in layout.STAGES]
+        for i, st in enumerate(layout.STAGES):
+            if i + 1 >= len(names):
+                continue
+            nxt = names[i + 1]
+            free = sum(1 for k, v in self.stations.items()
+                       if k.startswith(f"{nxt}_waiting_") and v.material is None)
+            room[st["name"]] = free
+        return dict(**at, in_flight=self.in_flight, room=room)
+
+    def log_pipeline(self):
+        s = self.pipeline_snapshot()
+        room = ",".join(f"{k}:{v}" for k, v in s.pop("room").items())
+        self.get_logger().info(
+            f"pipeline {s} · 下游可收 {room} · done={self.completed}")
+
     def _feed_machines(self, now):
         for m in self.machines:
             if m.holding is not None:
@@ -344,6 +393,7 @@ class FactoryManager(Node):
         by_color = {c: 0 for c in FLOW}
         for mat in self.materials.values():
             by_color[mat.mtype] = by_color.get(mat.mtype, 0) + 1
+        snap = self.pipeline_snapshot()
         s = String()
         s.data = json.dumps(
             dict(
@@ -356,6 +406,11 @@ class FactoryManager(Node):
                 tasks_created=self.next_task_id - 1,
                 in_flight=self.in_flight,
                 reclaimed=self.reclaimed,
+                # 注意：snapshot 里已经带了 in_flight，不能再展开进来
+                # —— dict() 会因关键字重复直接抛 TypeError，把工厂打死。
+                waiting=snap["waiting"], finished=snap["finished"],
+                machine=snap["machine"], storage=snap["storage"],
+                room=snap["room"],
             )
         )
         self.pub_summary.publish(s)

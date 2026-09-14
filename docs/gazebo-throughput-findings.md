@@ -1630,3 +1630,61 @@ R1 pos=(4.04, 5.50) goal=(3.4,6.0) 距目标 0.81 m  done=False  <-- 卡在它�
 
 第 3 条是关键的方法论修正：第 40 节的结论虽然是靠对照实验得到的，
 但"真实系统里到底有没有重复占用"此前**从未被测量过**。
+
+## 43. 卡顿的构成：中位每一单**多花 14.8 s**
+
+用 `tools/factory_state.py` 拍到一次停摆运行的终态（新增工具，直接订阅
+`/factory/summary` `/factory/machines` `/fleet/robots`，不再靠任务日志反推）：
+
+```
+materials 23 · completed 1 · tasks_created 42 · done 18
+in_flight 5   reclaimed 16          <-- 42 单里回收了 16 单
+车辆: R1/R2/R5 idle（其中 R1 在 (22.87,5.19)、R5 在 (12.22,5.24)）
+```
+
+把已送达的 18 单按"实际耗时 vs 理想耗时（直线/0.6 + 装卸 2.4 s）"对齐：
+
+| 实际 | 理想 | 超出 | 路线 |
+|---|---|---|---|
+| 33.7 | 4.4 | **+29.3** | roving_finished_0 → storage_red_slot_0 |
+| 29.7 | 5.6 | +24.1 | carding_finished_2 → drawing_waiting_1 |
+| 25.7 | 3.5 | +22.2 | drawing_finished_0 → roving_waiting_0 |
+| 27.6 | 6.0 | +21.6 | storage_empty_slot_3 → carding_waiting_3 |
+
+**中位超出 14.8 s，平均 14.7 s**，也就是每一单有约 2.5 倍的时间不是花在
+"应该走的路上"。被回收的 16 单全部是"45 s 还没送到"的，分布在这些路线上：
+
+```
+task  7 stale 45s (src=carding_finished_1 dst=drawing_waiting_0)
+task 10 stale 45s (src=storage_empty_slot_0 dst=carding_waiting_0)
+task 18 stale 45s (src=carding_finished_1 dst=drawing_waiting_0)
+task 33 stale 45s (src=carding_finished_1 dst=drawing_waiting_0)   <-- 同一条路 3 次
+```
+
+**同一条路线反复被回收，而同一路线的其它单却能正常送达** —— 所以不是路线
+不可达，而是**拥塞**：前车堵住通道，后车在里面慢慢挪，45 s 到不了，被回收，
+车放回去再要一单（很可能又是同一条路线），循环。
+
+里程账也支持这个判断：18 单的**直线距离合计只有 52.8 m**，而全队总里程
+**341.4 m**，里程/直线 = 6.5 倍。其中空驶（车从当前位置开到取货位）占大头。
+
+## 44. 上报速度是"最后一条指令"，协调层因此看不见停车
+
+`publish_status` 里 `s.speed` 原来是 `self._v_cmd` —— **最后一条速度指令**。
+但车停下时控制器根本不再下指令，于是这个值永远停在停车前的那个数：
+终态采样里一台 `idle` 的车照样上报 **0.85 m/s**（也见过 idle 上报 -0.10）。
+
+而协调层判断"是不是真停着"就靠这个字段：
+
+```python
+if self.speed.get(rid, 0.0) < WAIT_SPEED_THRESHOLD:   # 0.03 m/s
+    if self.wait_since.get(rid) is None:
+        self.wait_since[rid] = now
+```
+
+`wait_since` 于是**永远设不上**，`get_wait_duration()` 恒为 0，
+ROS 1 那套"等太久 → 反饥饿优先级增益 / 判定让路 / 卡死自愈"的机制**整体失效**：
+车队慢下来的时候，协调层还以为所有车都在正常行驶。
+
+改成由**位姿差分**算真实速度（10 Hz 采样加一阶低通，`_update_measured_speed`），
+停车/被挡/打滑都会如实反映成低速。参数 `true_speed_report` 可关掉做消融。

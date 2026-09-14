@@ -137,6 +137,10 @@ class RobotController(Node):
         self.declare_parameter("debug_avoid", False)
         # 收到工厂撤销时是否真的放手（关掉 = 旧行为，用于消融）
         self.declare_parameter("cancel_on_factory", True)
+        # 上报真实速度（位姿差分）而不是最后一条指令速度。
+        # 关掉 = 旧行为，用于消融。
+        self.declare_parameter("true_speed_report", True)
+        self._true_speed = bool(self.get_parameter("true_speed_report").value)
         # 排障开关：把"前方有近障碍"的原始 scan 帧写到这个目录（空=关）
         self.declare_parameter("debug_scan_dir", "")
 
@@ -485,7 +489,9 @@ class RobotController(Node):
         s.odom_total = float(self.total_len) + float(self.seen_len)
         # 交通协调层要用的三项：没有它们，协调层就无法判断"是不是真的停着"
         # （反饥饿增益）、也拿不到当前阶段目标（冲突裁决与卡死自愈）。
-        s.speed = float(getattr(self, "_v_cmd", 0.0))
+        # 真实速度（位姿差分），不是最后一条指令 —— 见 _update_measured_speed
+        s.speed = (float(getattr(self, "_meas_speed", 0.0))
+                   if self._true_speed else float(getattr(self, "_v_cmd", 0.0)))
         tx, ty = self._target_xy()
         s.has_target = tx is not None
         s.target_x = float(tx) if tx is not None else 0.0
@@ -546,8 +552,41 @@ class RobotController(Node):
         self.state = new
 
     # ---------- 主循环 ----------
+    def _update_measured_speed(self, now: float):
+        """由位姿增量算**真实**速度，替掉原先上报的"最后一条指令速度"。
+
+        为什么必须这么算：`s.speed` 原来是 `self._v_cmd`，也就是最后一条
+        速度指令。可车停下时控制器根本不再下发指令，于是 `_v_cmd` 永远停在
+        停车前的那个值 —— 终态采样里一台 `idle` 的车照样上报 0.85 m/s。
+        而交通协调层正是用这个字段判断"是不是真停着"：
+
+            if self.speed.get(rid, 0.0) < WAIT_SPEED_THRESHOLD:   # 0.03 m/s
+                if self.wait_since.get(rid) is None:
+                    self.wait_since[rid] = now
+
+        `wait_since` 于是**永远设不上**，`get_wait_duration()` 恒返回 0，
+        ROS 1 那套"等太久就给反饥饿优先级增益 / 判定让路"的机制整体失效，
+        车队慢下来时协调层还以为大家都在跑。
+
+        用位姿增量而不是指令值：停车、被挡、原地打滑都会如实反映成低速。
+        """
+        dt = now - getattr(self, "_spd_t", now)
+        if dt <= 1e-4:
+            return
+        self._spd_t = now
+        if getattr(self, "_spd_xy", None) is None:
+            self._spd_xy = (self.x, self.y)
+            return
+        px, py = self._spd_xy
+        self._spd_xy = (self.x, self.y)
+        inst = math.hypot(self.x - px, self.y - py) / dt
+        # 一阶低通：10 Hz 采样的差分会很毛，协调层要的是趋势不是瞬时抖动
+        prev = getattr(self, "_meas_speed", 0.0)
+        self._meas_speed = 0.65 * prev + 0.35 * inst
+
     def loop(self):
         now = time.time()
+        self._update_measured_speed(now)
         if self.state == "idle":
             self._decide()
         elif self.state in ("to_pickup", "to_dropoff", "to_charger", "departing"):

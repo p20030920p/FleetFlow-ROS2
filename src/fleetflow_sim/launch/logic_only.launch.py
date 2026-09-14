@@ -60,6 +60,7 @@ def _spawn(context, *args, **kwargs):
                                   battery_drain_per_m=float(LaunchConfiguration("battery_drain").perform(context)),
                                   stuck_timeout_s=float(LaunchConfiguration("stuck_timeout").perform(context)),
                                   cancel_on_factory=LaunchConfiguration("cancel_on_factory").perform(context).lower() == "true",
+                                  true_speed_report=LaunchConfiguration("true_speed_report").perform(context).lower() == "true",
                                   use_internal_kinematics=True)])
         )
     return actions
@@ -73,6 +74,8 @@ def generate_launch_description():
         DeclareLaunchArgument("stuck_timeout", default_value="10.0"),
         DeclareLaunchArgument("battery_drain", default_value="0.55"),
         DeclareLaunchArgument("cancel_on_factory", default_value="true"),
+        DeclareLaunchArgument("true_speed_report", default_value="true"),
+        DeclareLaunchArgument("stale_task_timeout", default_value="45.0"),
         DeclareLaunchArgument("policy", default_value="nearest"),
         DeclareLaunchArgument("seed", default_value="7"),
         DeclareLaunchArgument("run_label", default_value="logic"),

@@ -72,6 +72,7 @@ def _robots(context, *args, **kwargs):
                                   start_stagger_s=float(LaunchConfiguration("start_stagger").perform(context)),
                                   avoid_cones=LaunchConfiguration("avoid_cones").perform(context).lower() == "true",
                                   cancel_on_factory=LaunchConfiguration("cancel_on_factory").perform(context).lower() == "true",
+                                  true_speed_report=LaunchConfiguration("true_speed_report").perform(context).lower() == "true",
                                  use_sim_time=use_sim_time)],
             )
         )
@@ -203,6 +204,7 @@ def generate_launch_description():
         DeclareLaunchArgument("collision_criterion", default_value="outline",
                               description="outline=轮廓净距（默认）；centre=旧车心距判据（对照实验用）"),
         DeclareLaunchArgument("cancel_on_factory", default_value="true"),
+        DeclareLaunchArgument("true_speed_report", default_value="true"),
         DeclareLaunchArgument("stale_task_timeout", default_value="45.0"),
         DeclareLaunchArgument("avoid_cones", default_value="false",
                               description="开启控制器本地前方锥形互让（默认关，交给协调层）"),
