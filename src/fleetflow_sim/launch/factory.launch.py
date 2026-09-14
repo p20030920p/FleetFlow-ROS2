@@ -215,7 +215,9 @@ def generate_launch_description():
                               description="先推进完工位再投料（false = 旧顺序）"),
         DeclareLaunchArgument("empty_slots", default_value="4",
                               description="空筒取放位数量（= 喂料并发上限），4~8"),
-        DeclareLaunchArgument("escape_election", default_value="true"),
+        # 默认 false：实测"让一台车原地让位"会把通道堵死，
+        # 卡死时长从 3.6% 恶化到 15.2%（见 findings 第 62 节）。
+        DeclareLaunchArgument("escape_election", default_value="false"),
         DeclareLaunchArgument("stall_horizon", default_value="8.0"),
         DeclareLaunchArgument("true_speed_report", default_value="true"),
         DeclareLaunchArgument("stale_task_timeout", default_value="45.0"),

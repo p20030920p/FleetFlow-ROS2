@@ -22,16 +22,16 @@
 *One cycle, dispatch to delivery. Solid line = covered, dashed = remaining plan. The aisle
 pallets are static obstacles in the A\* cost map.*
 
-> **Recorded 2026-09-14** from the current build: 6 AGVs and 40 units in the logic stack, one
-> 60 s stretch of a longer run, 90 frames, rendered offscreen. It replaces a capture made before
-> the odometry-QoS and speed-reporting fixes, in which vehicles passed closer than their bodies
-> allow under physics — that file is no longer in the repository. Motion here is ideal
-> kinematics, not Gazebo contact.
+> **Recorded 2026-09-14** from the current build: 8 AGVs and 24 units in the logic stack, the
+> 60 s with the most fleet displacement out of a 220 s run, 90 frames, rendered offscreen. Motion
+> here is ideal kinematics, not Gazebo contact.
 >
-> The window is chosen for activity, not for peak output: `tools/pick_active.py` selects the
-> 60 s with the most fleet displacement, and `tools/check_gif.py` verifies the result. An
-> earlier attempt was discarded because it passed a naive "all frames differ" check while
-> moving almost nothing — median 0.077 % of pixels changed per frame against 0.436 % here.
+> **This configuration was chosen to minimise vehicles freezing, and freezing is not eliminated.**
+> Over the full 220 s, 27 stall episodes total 381 s, about 22 % of fleet time, clustered in front
+> of the carding and drawing berths. The rendered window holds two episodes (10 %); the window is
+> picked for activity, not for being stall-free. Turning off `escape_election` cut stalls from
+> 15.2 % to 3.6 % in a controlled comparison, and 8 AGVs with 24 units was the best of four
+> configurations tested - but berth contention, not the aisle, remains the unresolved cause.
 
 Five AGVs move cans between carding, drawing and roving machines on a 26 × 16 m floor. A scheduler
 assigns the work, each vehicle plans and drives its own route, and a shift board reports the floor.

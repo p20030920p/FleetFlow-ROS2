@@ -62,7 +62,8 @@ class TrafficManager(Node):
         self.declare_parameter("stall_horizon_s", 8.0)
         # 脱困选举：一对贴住的车只让一台脱困，另一台原地让出空间。
         # 关掉 = 双方各自脱困（旧行为，实测会互推）。
-        self.declare_parameter("escape_election", True)
+        # 默认 false —— 见 findings 第 62 节，开启会让卡死恶化 4 倍
+        self.declare_parameter("escape_election", False)
 
         self.ttl = float(self.get_parameter("lease_ttl_s").value)
         self.leases: dict[str, Lease] = {}
