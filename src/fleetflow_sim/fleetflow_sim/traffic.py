@@ -97,6 +97,9 @@ PROTECTED_PRIORITY_BONUS = 8        # 保护状态额外优先级
 
 # ---------------------------------------------------------------- 卡死自愈
 PERSISTENT_STALL_HORIZON = 8.0      # 连续等待多久算持久卡死（秒）
+# 注意：这个模块级常量是**默认值**，实例会优先读同名参数
+# （traffic_manager 的 stall_horizon_s），便于做消融。
+_STALL_HORIZON_DEFAULT = PERSISTENT_STALL_HORIZON
 STALL_NEAR_TARGET_TOLERANCE = 0.75  # 距目标多近算"快到但进不去"（米）
 STALL_REPLAN_COOLDOWN = 3.0         # 卡死重规划节流（秒）
 
@@ -239,6 +242,7 @@ class TrafficLayer:
         #   True  = 旧行为"排除所有朝对方的线速度，剩不下就原地转"
         #   False = 新行为"选一个让净距最大的动作"（见 build_emergency_escape_command）
         self.escape_legacy = False
+        self.stall_horizon = _STALL_HORIZON_DEFAULT   # 可被参数覆盖
         self.reset()
 
     # ================================================================
@@ -1171,7 +1175,7 @@ class TrafficLayer:
             target = self.target.get(rid)
             if target is None:
                 continue
-            if self.get_wait_duration(rid, now) < PERSISTENT_STALL_HORIZON:
+            if self.get_wait_duration(rid, now) < self.stall_horizon:
                 continue
 
             d_tgt = math.hypot(target[0] - self.pos[rid][0], target[1] - self.pos[rid][1])

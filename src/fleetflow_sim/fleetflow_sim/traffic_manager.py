@@ -57,6 +57,9 @@ class TrafficManager(Node):
         self.declare_parameter("collision_criterion", "outline")
         # 脱困策略开关，同样只为对照实验保留：legacy = 旧行为（原地转）
         self.declare_parameter("escape_strategy", "gap")
+        # 卡死判定地平线（秒）：连续低速多久算"持久卡死"。
+        # 做成参数是为了判断"卡死自愈"在帮忙还是捣乱（拉大等于关掉）。
+        self.declare_parameter("stall_horizon_s", 8.0)
 
         self.ttl = float(self.get_parameter("lease_ttl_s").value)
         self.leases: dict[str, Lease] = {}
@@ -76,6 +79,10 @@ class TrafficManager(Node):
         self.layer.centre_criterion = (crit == "centre")
         self.layer.escape_legacy = (str(self.get_parameter("escape_strategy").value)
                                     == "legacy")
+        # 卡死判定地平线：连续低速多久算"持久卡死"。
+        # QoS 修好之后它变得很敏感（假的位姿/速度曾让它恒定触发），
+        # 所以做成可调参数，用来判断"卡死自愈"到底是在帮忙还是在捣乱。
+        self.layer.stall_horizon = float(self.get_parameter("stall_horizon_s").value)
         self.peers: dict[int, RobotStatus] = {}
         self.last_seen: dict[int, float] = {}
 

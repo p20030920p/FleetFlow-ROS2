@@ -1773,3 +1773,30 @@ DDS 规则：**RELIABLE 发布者 + BEST_EFFORT 订阅者 = QoS 不兼容，一�
 并且伪装成了完全不同的症状（吞吐低、假卡死、车原地打转）。
 凡是**同一类**的缺陷，必须把**同类订阅点全部过一遍**，
 而不是修掉症状最明显的那个。
+
+## 48. 一次"整场零产出"的真实原因：漏写 `declare_parameter`
+
+给 `traffic_manager` 新增 `stall_horizon_s` 开关时，我加了
+`get_parameter("stall_horizon_s")`、也加了 launch 传参，
+**唯独漏了 `declare_parameter`**。rclpy 的行为是当场抛
+`ParameterNotDeclaredException` 并让节点退出，于是：
+
+```
+traffic_manager 崩溃 -> 没有任何交通指令 -> 车全部卡在 waiting_lease
+-> 325 s 跑满、完成 0 单、里程 0 m
+```
+
+这个失败**伪装得极像"吞吐又抖了"**：run.csv 里
+`completed=0, distance_total_m=0.0, utilisation≈0.99`，
+而 launch.log 里那行异常很容易被后面的正常日志淹没。
+我为此作废了一整轮 3 臂 × 300 s 的 Gazebo 配对实验
+（`f_twist_1` 与 `f_nostall_1` 两臂都是 0 单，当时还误判成
+"里程计 twist 改动导致的回归"，把 twist 停用又跑了一遍 —— 依然是 0 单，
+才回头去读 launch.log 找到真因）。
+
+**教训**：`get_parameter` / `declare_parameter` 这种"成对出现"的 API，
+漏一半的代价是整场实验作废，而且症状与性能问题混淆。
+因此新增 `tools/check_params.py`：静态扫描所有节点源码，
+要求每个 `get_parameter("x")` 都有对应的 `declare_parameter("x")`，
+缺失即 exit 1。已在全部 7 个节点上跑通（共 47 个参数）。
+**跑长实验前先跑它**，比事后从 run.csv 里猜便宜得多。

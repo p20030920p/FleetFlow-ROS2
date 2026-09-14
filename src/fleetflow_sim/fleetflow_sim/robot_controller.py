@@ -141,6 +141,7 @@ class RobotController(Node):
         # 关掉 = 旧行为，用于消融。
         self.declare_parameter("true_speed_report", True)
         self._true_speed = bool(self.get_parameter("true_speed_report").value)
+        self._odom_speed = None      # 里程计 twist 线速度，有 odom 时优先用它
         # 排障开关：把"前方有近障碍"的原始 scan 帧写到这个目录（空=关）
         self.declare_parameter("debug_scan_dir", "")
 
@@ -250,6 +251,17 @@ class RobotController(Node):
         p = m.pose.pose.position
         self.x, self.y = p.x + self.x0, p.y + self.y0     # odom 相对出生点
         self.yaw = yaw_from_quat(m.pose.pose.orientation) + self.yaw0
+        # 里程计自带的 twist 才是"真实行进速度"的最可靠来源。
+        #
+        # 为什么不能只用位姿差分（第 44 节那版）：位姿差分要求"两次采样之间
+        # 位移确实发生了"，而 odom 到达是**成簇**的 —— 两个 tick 之间可能
+        # 一帧都没来（差分得 0），下一帧又连来三帧（位移被算进一个 tick）。
+        # 结果就是速度信号在 0 和尖峰之间跳，低通之后仍长期贴着 0，
+        # 协调层于是继续误判"车停着"：QoS 修好之后一次 300 s 运行里
+        # 假卡死仍有 136 次、脱困 66 次，就是残余的假信号。
+        #
+        # twist 是 Gazebo 自己算出来的车身速度，不依赖采样对齐。
+        self._odom_speed = abs(float(m.twist.twist.linear.x))
 
     def _self_range(self, ang: float) -> float:
         """从雷达到**整车轮廓**在给定方向上的距离（车体系，前方为 +x）。
@@ -490,7 +502,7 @@ class RobotController(Node):
         # 交通协调层要用的三项：没有它们，协调层就无法判断"是不是真的停着"
         # （反饥饿增益）、也拿不到当前阶段目标（冲突裁决与卡死自愈）。
         # 真实速度（位姿差分），不是最后一条指令 —— 见 _update_measured_speed
-        s.speed = (float(getattr(self, "_meas_speed", 0.0))
+        s.speed = (self._true_speed_now()
                    if self._true_speed else float(getattr(self, "_v_cmd", 0.0)))
         tx, ty = self._target_xy()
         s.has_target = tx is not None
@@ -583,6 +595,17 @@ class RobotController(Node):
         # 一阶低通：10 Hz 采样的差分会很毛，协调层要的是趋势不是瞬时抖动
         prev = getattr(self, "_meas_speed", 0.0)
         self._meas_speed = 0.65 * prev + 0.35 * inst
+
+    def _true_speed_now(self) -> float:
+        """当前真实速度：优先里程计 twist，退化到位姿差分，再退化到指令。
+
+        twist 在有 odom 的模式（Gazebo）下就是真值；纯逻辑模式没有 odom，
+        用位姿差分足够（内部运动学积分理想，不存在成簇到达问题）。
+        """
+        v_odom = getattr(self, "_odom_speed", None)
+        if v_odom is not None:
+            return float(v_odom)
+        return float(getattr(self, "_meas_speed", 0.0))
 
     def loop(self):
         now = time.time()
