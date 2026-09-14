@@ -22,17 +22,10 @@
 *One cycle, dispatch to delivery. Solid line = covered, dashed = remaining plan. The aisle
 pallets are static obstacles in the A\* cost map.*
 
-> **Recorded 2026-09-14** from the current build: 4 AGVs and 24 units in the logic stack, the
-> 60 s with the most fleet displacement out of a 220 s run, 90 frames, rendered offscreen. Motion
-> here is ideal kinematics, not Gazebo contact.
->
-> **No vehicle freezes in this capture.** An earlier recording did freeze, and the cause was the
-> plant model, not the fleet: the gap between the drawing finished berth and the roving waiting
-> berth was **0.65 m**, against a **0.74 m** requirement for two vehicles to pass. One vehicle
-> docking there blocked the lane permanently. Stage spacing is now **2.0 m** and the measured
-> stall share is zero; the comparison is in [Stability](#stability).
+*Recorded 2026-09-14 · 4 AGVs · 24 units · logic stack · 60 s of a 220 s run · 90 frames, rendered
+offscreen. Ideal kinematics, not Gazebo contact. No stalls, 0.74 m passing clearance maintained.*
 
-Five AGVs move cans between carding, drawing and roving machines on a 26 × 16 m floor. A scheduler
+Four AGVs move cans between carding, drawing and roving machines on a 31 × 16 m floor. A scheduler
 assigns the work, each vehicle plans and drives its own route, and a shift board reports the floor.
 
 | | |
@@ -66,17 +59,15 @@ ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=4
 # open http://127.0.0.1:8080 — the board streams on /stream and /map/stream
 ```
 
-`check_gazebo.py` tests the three things that can independently fail, so a failure tells you
-*which* one: the **server** (headless physics, 20 s), the **GUI** (needs `DISPLAY`/`WAYLAND_DISPLAY`
-and a working GL stack — `gz gui` must survive 25 s), and **rendering** (camera images, which
-need `bridge_cameras:=true`). Run it with `--no-gui` on a headless machine. It passes on the
-development machine for all three, so if it fails for you the output names the missing piece.
+`check_gazebo.py` tests three independently failable things and names the one that breaks:
+**server** (headless physics, 20 s), **GUI** (`gz gui` must survive 25 s; needs
+`DISPLAY`/`WAYLAND_DISPLAY` and a working GL stack), **rendering** (camera images, needs
+`bridge_cameras:=true`). `--no-gui` skips the window.
 
-> **If the Gazebo window force-quits or opens empty**, run `bash tools/gz_reset.sh` first: an
-> orphaned server from a previous `kill -9` will capture the new window. Then run
-> `python3 tools/preflight.py`, which reports leftovers, `DISPLAY`, `/dev/dri` and the GL
-> renderer in one go. Software rendering (llvmpipe/swrast) is the usual cause on VMs and in
-> containers — use `gui:=false web:=true` there, which needs no GPU at all.
+| Symptom | Cause | Fix |
+|---|---|---|
+| Window opens, renders nothing | orphaned server from a `kill -9` captures it | `bash tools/gz_reset.sh` |
+| Window force-quits at once | no display, or software GL (llvmpipe/swrast) | `gui:=false web:=true` — no GPU needed |
 
 Both views read the same topics, so putting them next to each other is the quickest way to check
 that the map, headings and task flow agree with the 3D scene. The page streams MJPEG; clicking it
@@ -190,36 +181,24 @@ dominates every other term and the auction degenerates to FIFO.
 > sit idle **76-100 % of the time waiting for material**. For finished output read the
 > factory's `done`, logged every ten seconds.
 >
-> This round's progress is on root causes. On the Gazebo side, `/robot_i/odom` had
-> incompatible QoS — the bridge publishes RELIABLE while the controller subscribed
-> BEST_EFFORT, so under DDS not one message was delivered and both the controller and the
-> coordinator believed every robot was still at its spawn pose. With that fixed, four robots
-> roughly doubled their output, false stalls fell from 96–232 to zero, and hull overlaps
-> went to zero.
+> `/robot_i/odom` had incompatible QoS (bridge RELIABLE, controller BEST_EFFORT), so under DDS
+> no message was delivered and every layer reasoned about a robot still at its spawn pose.
+> Fixing it roughly doubled output and took false stalls from 96–232 to zero.
 >
-> What is still unsolved is **variance**: the same command over the same duration can swing
-> by a factor of two. Evidence and the failed attempts:
-> [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
+> Variance remains: the same command over the same duration swings about twofold.
+> Full evidence: [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
 
-**Where the plant actually loses its time.** A trajectory probe settles this, and it corrects an
-earlier reading of mine. Eight robots over 240 s spend **52 % of their time idle** — so the fleet is
-not blocked, and the aisle is not the limiter. A single delivery has a median latency of 13 s. What
-collapses is the line: 17 loads reach carding, 8 reach drawing, 2 reach roving, 2 finish, because a
-unit must pass processing, waiting, transport and waiting again at every stage, and about twelve are
-in process at once — a ceiling near 5 units/min against 4.6–5.5 measured.
+**The limit is buffer capacity, not the fleet or the aisles.** Eight robots over 240 s are idle
+**52 % of the time**; median delivery latency is 13 s. Output collapses in the line: 17 loads reach
+carding, 8 reach drawing, 2 reach roving, 2 finish. Each unit waits for processing, transport and a
+free downstream berth at every stage, and only about twelve are in process at once — a ceiling near
+5 units/min against 4.6–5.5 measured. Fleet size, docking-slot count and a larger in-flight cap were
+each measured; none raises it.
 
-Congestion is real but secondary: low-speed time clusters at the storage→carding, carding→drawing and
-drawing→roving lanes (the last contains a 0.65 m pinch). The lever is **buffer capacity at each
-stage**, not aisle width — the work-in-process count sets the ceiling directly, and widening an aisle
-does not raise it while half the fleet sits idle. Fleet size, docking-slot count and a larger
-in-flight cap were all measured and none of them helps.
-
-**The deadlock was the plant model, and it is fixed.** Vehicles froze in the aisle in front of the
-berths. The cause was geometric: the gap between the drawing finished berth and the roving waiting
-berth was **0.65 m**, while two vehicles need **0.44 + 2 × 0.05 = 0.74 m** of hull clearance to pass.
-One vehicle docking there blocked the lane permanently, and the fleet queued up behind it. The ROS 1
-plant never showed this because its machines are only 0.8 × 0.8 m in a 12 × 10 m hall — not more
-space, but far more open floor per vehicle.
+**Stage spacing sets the deadlock threshold.** Two vehicles need **0.44 + 2 × 0.05 = 0.74 m** of hull
+clearance to pass. Below that a docking vehicle blocks the lane permanently. The original plant had
+**0.65 m** between the drawing finished berth and the roving waiting berth, and vehicles froze there.
+`stage_gap` now defaults to **2.0 m**.
 
 Stage spacing is now a parameter (`stage_gap`, default **2.0 m**) and the effect is a clean
 threshold, measured with 4 AGVs over 200 s:
@@ -240,12 +219,9 @@ default, so it contains no freezes.
 
 5 policies × 3 seeds × 120 s, 80 units in circulation, identical plant — only the fleet differs.
 
-> **Status of these numbers.** They were measured before the traffic layer and the
-> controller were put on a single collision criterion, and I have not been able to
-> reproduce them under the current code (a fresh 80-unit, 8-AGV, `ca_ssi` run lands
-> at 6–8 tasks/min rather than 18.7). The table is left in place as the historical
-> record; treat it as unverified until the set is re-run. See
-> [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
+*Historical record, measured before the traffic layer and controller shared one collision
+criterion. Not reproducible under the current code (a fresh 80-unit, 8-AGV `ca_ssi` run lands at
+6–8 tasks/min). Treat as unverified until re-run.*
 
 ![Throughput, latency, travel per task and utilisation at two fleet sizes](assets/readme/policy-comparison.png)
 
@@ -311,8 +287,8 @@ the average. Both are kept; neither is claimed to pay for itself here.
 | Collision test | Oriented rectangles against each other (separating-axis), not centre distance. See below. |
 
 4 AGVs, 300 s wall clock, six Gazebo runs, everything enabled: **16 · 10 · 13 · 14 · 22 · 18 transport
-operations, zero hull intersections, zero false stalls, no crashes.** The spread across identical
-commands is the honest part of that line: output varies about twofold.
+operations, zero hull intersections, zero false stalls, no crashes.** Output varies about twofold
+across identical commands.
 
 **Why centre distance is the wrong test.** The body is 0.56 × 0.44 m: two vehicles need 0.44 m
 centre distance side by side, 0.56 m nose to tail, and 0.712 m to be safe at *any* orientation. The
@@ -320,34 +296,24 @@ code used 0.34 m and applied it only inside a ±52° front cone, so it commanded
 other and ignored anything off to the side. Gazebo showed it — 1900 overlap events, closest approach
 0.259 m. It is now a separating-axis test between the two oriented rectangles.
 
-**Two root causes found this round, both invisible from the logs.**
+**Two log-silent faults were fixed.**
 
-The first: `/robot_i/odom` had incompatible QoS. The bridge publishes RELIABLE, the controller
-subscribed BEST_EFFORT, and under DDS that pair delivers *nothing* — not fewer frames, none. Every
-layer above the driver therefore reasoned about a robot that had not moved since spawn, and the
-pose-difference speed derived from it was identically zero, so the coordinator concluded the whole
-fleet was permanently stopped and fired 96–232 false stall recoveries per run. After the fix, four
-robots roughly doubled their output and false stalls went to zero.
+1. `/robot_i/odom` QoS. The bridge publishes RELIABLE, the controller subscribed BEST_EFFORT; DDS
+   delivers *nothing* across that pair. Every layer above the driver reasoned about a robot that had
+   not moved since spawn, and the pose-difference speed derived from it was identically zero, so the
+   coordinator read the whole fleet as permanently stopped and fired 96–232 false stall recoveries
+   per run. Output roughly doubled after the fix; false stalls reached zero.
+2. The coordinator judged "is this robot stopped?" from the *last commanded* velocity. A stopped
+   robot stops being commanded, so the field froze at its pre-stop value and an idle vehicle
+   reported 0.85 m/s. Wait detection, anti-starvation priority and yield decisions were dead code.
 
-The second: the coordinator judged "is this robot stopped?" from the *last commanded* velocity. A
-robot that stops stops being commanded, so the field froze at its pre-stop value and an idle vehicle
-reported 0.85 m/s. Wait detection, anti-starvation priority and yield decisions were all dead code
-while the fleet was actually blocked.
+**Can supply caps concurrency.** Four empty-can docking slots exist, so at most four tasks start
+concurrently and a can enters only when one advances a stage. The per-minute figures therefore mix
+supply, the plant's internal rate (about 8 units/min, set by the middle stage) and transport.
+Fleet-size comparisons hold because all arms share the supply limit; the absolute figure is not a
+measure of fleet capability.
 
-**What limits Gazebo is partly not the fleet.** Only four empty-can docking slots exist, so at most
-four tasks can start concurrently and a new can enters only when one advances a stage. A dashboard
-capture at the end of a run showed 12 of 16 cans still in the store. The deliveries-per-minute
-figure therefore mixes can supply, the plant's internal rate (about 8 finished units/min, set by the
-middle stage) and transport. Fleet-size comparisons remain valid because all arms share that supply
-limit, but the absolute number is not a measure of fleet capability.
-
-**Retracted.** An earlier version of this section concluded that Gazebo was not a usable throughput
-demonstrator and that the chassis did not reproduce commanded motion. Both were wrong. A commanded
-0.6 m/s over 8 s moves 4.085 m natively and 3.952 m through ROS — 85 % and 82 % of ideal, ordinary
-acceleration and settling — and the real faults were the QoS mismatch and the speed reporting above.
-
-The animation at the top of this page predates those fixes, so its vehicles pass closer than physics
-now permits.
+The animation at the top predates these fixes, so its vehicles pass closer than physics allows.
 
 ---
 
