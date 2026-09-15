@@ -97,13 +97,12 @@ class RobotController(Node):
         # 出库错峰：第 i 台车等 i*start_stagger_s 秒再开始领任务
         self.declare_parameter("start_stagger_s", 0.0)
         # 安全 / 车队行为
-        # 安全距离必须由**车体几何**推出来，不能拍一个数：
-        # 车体 0.56×0.44 m，外接圆半径 0.356 m，所以两车在任意朝向下不重叠
-        # 至少需要 0.712 m 的**车心距**。曾经写死 0.34 m —— 那是主动把车开到
-        # 必然重叠的距离上，Gazebo 里就会真的撞在一起。
-        self.hull_len, self.hull_wid = 0.56, 0.44
-        self.hull_r = math.hypot(self.hull_len, self.hull_wid) / 2.0   # 0.356 m
-        self.hull_diag = 2 * self.hull_r                              # 0.712 m
+        # 安全距离由**车体几何**推出，不拍数。车是 Ø0.50 圆盘（layout.AGV），
+        # 圆的好处是外接圆就是车体本身：不重叠只需车心距 ≥ 0.50 m，
+        # 与朝向无关，不必再算外接圆。
+        self.hull_r = layout.AGV["dia"] / 2.0        # 0.25 m
+        self.hull_len = self.hull_wid = 2.0 * self.hull_r
+        self.hull_diag = 2.0 * self.hull_r           # = 车心距下限 0.50 m
         # 碰撞判据的安全余量：车体各外扩这么多，仍算"要撞了"
         self.declare_parameter("avoid_margin_m", 0.05)
         # 锥形互让负责"礼貌"，真正的防撞由有向矩形判据兜底。
@@ -117,17 +116,17 @@ class RobotController(Node):
         self.declare_parameter("stuck_timeout_s", 10.0)
         # 电量
         self.declare_parameter("battery_drain_per_m", 0.55)
-        # 车体几何：LiDAR 安装点相对车体中心的纵向偏移，用于逐角度屏蔽自身回波
-        self.hull_len, self.hull_wid, self.lidar_dx = 0.56, 0.44, 0.18
-        # 凸出车体矩形、且落在雷达扫描平面上的部件，按 (cx, cy, r) 圆列出。
-        # 数值取自 agv.urdf.xacro：轮子 origin y=±sep/2=±0.21、半径 0.075
-        # （轮心 z=-0.07，扫描面 z≈0.115 与轮相割，所以确实会被扫到）；
-        # 万向轮在车尾 (x=-0.22, r=0.045)，同样列出以覆盖车尾回波。
-        sep = 0.42
+        # LiDAR 安装点相对车体中心的前向偏移（urdf 里 lidar 在中心上方，故 0）。
+        # 用于逐角度屏蔽自身回波。
+        self.lidar_dx = 0.0
+        # 凸出车体、且落在雷达扫描平面上的部件，按 (cx, cy, r) 列出。
+        # 数值取自 agv.urdf.xacro：轮子 origin y=±sep/2=±0.18、半径 0.06
+        # （轮心贴近底面，扫描面与轮相割）；万向轮在车尾。
+        sep = layout.AGV["wheel_base"]
         self.self_circles = [
-            (0.0, +sep / 2, 0.075),
-            (0.0, -sep / 2, 0.075),
-            (-0.22, 0.0, 0.045),
+            (0.0, +sep / 2, 0.06),
+            (0.0, -sep / 2, 0.06),
+            (-self.hull_r * 0.72, 0.0, 0.04),
         ]
         self.declare_parameter("scan_self_mask_m", 0.06)
         self.declare_parameter("battery_low_pct", 30.0)

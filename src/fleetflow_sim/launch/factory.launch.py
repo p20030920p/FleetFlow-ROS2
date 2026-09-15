@@ -193,7 +193,7 @@ def generate_launch_description():
                               description="true = 带界面的 Gazebo；false = 无头服务端"),
         DeclareLaunchArgument("num_robots", default_value="4"),
         DeclareLaunchArgument("max_tasks_in_flight", default_value="6"),
-        DeclareLaunchArgument("num_materials", default_value="12"),
+        DeclareLaunchArgument("num_materials", default_value="36"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("out_dir", default_value="/tmp/fleetflow_frames"),
         DeclareLaunchArgument("frame_every", default_value="3.0"),

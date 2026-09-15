@@ -83,7 +83,10 @@ class Material:
 class FactoryManager(Node):
     def __init__(self):
         super().__init__("factory_manager")
-        self.declare_parameter("num_materials", 10)
+        # 36 = 任务比例 36:36:6:1 的第一项（投料单数），见 README
+        self.declare_parameter("num_materials", 36)
+        # 成品是否回收复用（关掉 = 每件料只走一遍，产线会跑空）
+        self.declare_parameter("recycle_finished", True)
         self.declare_parameter("tick_hz", 10.0)
         self.declare_parameter("max_tasks_in_flight", 6)
         # 任务在途超过这么久没有推进就回收（秒）。没有这个兜底，
@@ -111,6 +114,7 @@ class FactoryManager(Node):
             self.stations[name] = Station(name, pt["x"], pt["y"])
         self.machines = [Machine(s, lane) for s in layout.STAGES for lane in range(len(s["lanes"]))]
 
+        self.recycle_finished = bool(self.get_parameter("recycle_finished").value)
         n = int(self.get_parameter("num_materials").value)
         self.materials: dict[int, Material] = {
             i: Material(i, "empty", "storage_empty") for i in range(n)
@@ -192,8 +196,18 @@ class FactoryManager(Node):
         mat = self.materials.get(mid)
         if mat is not None:
             if task.dest_name.startswith("storage_red"):
-                # 进入成品/红料区视为完工
-                self.materials.pop(mid, None)
+                # 进入成品/红料区视为完工。
+                #
+                # **成品回收复用**：早期实现是 `materials.pop()`，于是每件料只能
+                # 走一遍全流程，跑完 N 件之后整座厂就再也没有可搬的料 ——
+                # 表现为"跑着跑着彻底停了"。真实车间的条筒是循环使用的，
+                # 所以这里把料放回空筒库重新入线，产线才能持续运转。
+                # 这样任务比例也才能稳定在 36:36:6:1（见 README 的说明）。
+                if self.recycle_finished:
+                    mat.where = "storage_empty"
+                    mat.mtype = "empty"
+                else:
+                    self.materials.pop(mid, None)
                 self.completed += 1
             else:
                 mat.where = task.dest_name

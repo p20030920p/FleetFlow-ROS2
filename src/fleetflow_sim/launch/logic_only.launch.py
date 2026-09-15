@@ -78,7 +78,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("num_robots", default_value="4"),
         DeclareLaunchArgument("max_tasks_in_flight", default_value="6"),
-        DeclareLaunchArgument("num_materials", default_value="12"),
+        DeclareLaunchArgument("num_materials", default_value="36"),
         DeclareLaunchArgument("stuck_timeout", default_value="10.0"),
         DeclareLaunchArgument("battery_drain", default_value="0.55"),
         DeclareLaunchArgument("cancel_on_factory", default_value="true"),
