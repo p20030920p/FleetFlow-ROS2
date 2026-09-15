@@ -22,10 +22,11 @@
 *One cycle, dispatch to delivery. Solid line = covered, dashed = remaining plan. The aisle
 pallets are static obstacles in the A\* cost map.*
 
-*Recorded 2026-09-14 · 4 AGVs · 24 units · logic stack · 60 s of a 220 s run · 90 frames, rendered
-offscreen. Ideal kinematics, not Gazebo contact. No stalls, 0.74 m passing clearance maintained.*
+*Recorded 2026-09-15 · 10 AGVs · 36 units · 120 × 60 m plant · logic stack · 60 s of a 260 s run ·
+90 frames, rendered offscreen on a viewport covering storage → carding → drawing → roving.
+Ideal kinematics, not Gazebo contact; passing clearance 3.8× the 0.80 m requirement.*
 
-Four AGVs move cans between carding, drawing and roving machines on a 31 × 16 m floor. A scheduler
+Ten AGVs move cans between carding, drawing and roving machines on a 120 × 60 m floor. A scheduler
 assigns the work, each vehicle plans and drives its own route, and a shift board reports the floor.
 
 | | |
@@ -52,10 +53,10 @@ python3 tools/preflight.py                # environment: leftovers, DISPLAY, GL
 python3 tools/check_gazebo.py             # three gates: server, GUI, rendering
 
 ros2 launch fleetflow_sim factory.launch.py                  # Gazebo server only
-ros2 launch fleetflow_sim logic_only.launch.py num_robots:=4 policy:=ssi   # no Gazebo
+ros2 launch fleetflow_sim logic_only.launch.py num_robots:=10 policy:=ssi   # no Gazebo
 
 # Gazebo GUI and the floor plan live in a browser, side by side
-ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=4
+ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=10
 # open http://127.0.0.1:8080 — the board streams on /stream and /map/stream
 ```
 

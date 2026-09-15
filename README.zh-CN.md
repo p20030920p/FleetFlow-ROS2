@@ -21,10 +21,11 @@
 
 *一个完整循环，从发放任务到送达。实线=已行驶，虚线=剩余规划；通道里的托盘是 A\* 代价图里的真实静态障碍。*
 
-*录制于 2026-09-14 · 4 台车 · 24 件物料 · 逻辑栈 · 220 s 运行中取 60 s · 90 帧，离屏渲染。
-理想运动学，非 Gazebo 接触。无卡死，会车净距 0.74 m。*
+*录制于 2026-09-15 · 10 台车 · 36 件物料 · 120 × 60 m 厂区 · 逻辑栈 · 260 s 运行中取 60 s ·
+90 帧，离屏渲染，视口覆盖 储物→梳棉→并条→粗纱。理想运动学，非 Gazebo 接触；
+会车余量是会车需求的 3.8 倍。*
 
-4 台 AGV 在 31 × 16 米的车间里，于梳棉、并条、粗纱机台之间搬运条筒。调度器派单，
+10 台 AGV 在 120 × 60 米的车间里，于梳棉、并条、粗纱机台之间搬运条筒。调度器派单，
 每台车自己规划并执行路径，生产看板显示车间状态。
 
 | | |
@@ -51,10 +52,10 @@ python3 tools/preflight.py                # 环境体检：残留进程 / DISPLA
 python3 tools/check_gazebo.py             # 三关自检：服务端 / 界面 / 渲染
 
 ros2 launch fleetflow_sim factory.launch.py                  # 只起 Gazebo 服务端
-ros2 launch fleetflow_sim logic_only.launch.py num_robots:=4 policy:=ssi   # 不启 Gazebo
+ros2 launch fleetflow_sim logic_only.launch.py num_robots:=10 policy:=ssi   # 不启 Gazebo
 
 # Gazebo 界面 + 浏览器里的实时平面图，并排对照
-ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=4
+ros2 launch fleetflow_sim factory.launch.py gui:=true web:=true num_robots:=10
 # 打开 http://127.0.0.1:8080 —— 画面走 /stream 与 /map/stream
 ```
 
