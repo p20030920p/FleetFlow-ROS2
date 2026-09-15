@@ -67,17 +67,29 @@ CJK = ["Noto Sans CJK JP", "Noto Sans CJK SC", "DejaVu Sans"]
 
 # 画布与地图区域（像素）
 CW, CH = 1240, 680
-MAP = dict(l=44, r=884, b=74, t=596)
+# 地图框：高度尽量占满，好让"视口放大"有空间可用。
+# 原为 b=74,t=596（高 522，比例 1.61:1），把上下的留白收紧到
+# b=52,t=642（高 590，比例 1.42:1），更接近典型演示视口的比例。
+MAP = dict(l=40, r=890, b=52, t=642)
+
+
+# 视口：要显示的世界矩形 (x0, y0, x1, y1)。默认整个厂房。
+# 为什么需要它：厂区 120×60 m、车 Ø0.50 m，全幅画在 840 px 宽的地图里
+# 每米只有 7 px，车不到 4 px —— 看不清也谈不上演示。
+# 传入视口即可放大到实际活动区（如生产段 x=20~70）。
+VIEW = {"x0": 0.0, "y0": 0.0, "x1": float(L.BUILDING["w"]), "y1": float(L.BUILDING["h"])}
 
 
 def w2p(x, y):
-    """世界坐标 (m) -> 画布像素。"""
-    sx = (MAP["r"] - MAP["l"]) / L.BUILDING["w"]
-    sy = (MAP["t"] - MAP["b"]) / L.BUILDING["h"]
+    """世界坐标 (m) -> 画布像素（按 VIEW 视口缩放）。"""
+    vw = max(1e-6, VIEW["x1"] - VIEW["x0"])
+    vh = max(1e-6, VIEW["y1"] - VIEW["y0"])
+    sx = (MAP["r"] - MAP["l"]) / vw
+    sy = (MAP["t"] - MAP["b"]) / vh
     s = min(sx, sy)
-    ox = MAP["l"] + ((MAP["r"] - MAP["l"]) - s * L.BUILDING["w"]) / 2
-    oy = MAP["b"] + ((MAP["t"] - MAP["b"]) - s * L.BUILDING["h"]) / 2
-    return ox + x * s, oy + y * s, s
+    ox = MAP["l"] + ((MAP["r"] - MAP["l"]) - s * vw) / 2
+    oy = MAP["b"] + ((MAP["t"] - MAP["b"]) - s * vh) / 2
+    return ox + (x - VIEW["x0"]) * s, oy + (y - VIEW["y0"]) * s, s
 
 
 def hexc(c):
@@ -310,9 +322,19 @@ def main() -> int:
                     help="只渲染该时刻之前")
     ap.add_argument("--still-at", type=float, default=None,
                     help="不给 GIF，只导出该时刻（仿真秒）的单帧 PNG")
+    ap.add_argument("--view", default=None, metavar="x0,y0,x1,y1",
+                    help="只渲染这个世界矩形（放大局部；默认整个厂房）")
     ap.add_argument("--still-scale", type=float, default=1.0,
                     help="静图缩放，>1 更清晰")
     args = ap.parse_args()
+
+    if args.view:
+        try:
+            vx0, vy0, vx1, vy1 = (float(v) for v in args.view.split(","))
+            VIEW.update(x0=vx0, y0=vy0, x1=vx1, y1=vy1)
+        except ValueError:
+            print(f"--view 需要 x0,y0,x1,y1，收到 {args.view!r}", file=sys.stderr)
+            return 2
 
     rows = [json.loads(l) for l in open(args.jsonl, encoding="utf-8")]
     # 有仿真时钟就用仿真时间（Gazebo 模式实时因子远小于 1，墙钟会骗人）。
@@ -386,7 +408,9 @@ def main() -> int:
         for i, (lab, val, col) in enumerate((("待分配", pen, MUTED),
                                              ("在途", run, AMBER),
                                              ("已完成", done, GREEN))):
-            x = CW - 300 + i * 100
+            # KPI 从右往左排，并给右侧面板标题留出足够间距：
+            # 原来 x 从 CW-300 起、步长 100，第三个数字会顶到面板标题上。
+            x = CW - 90 - (2 - i) * 96
             ax.text(x, CH - 24, f"{val:>3d}", fontsize=17, fontweight="bold",
                     family="monospace", color=col, ha="center", va="center")
             ax.text(x, CH - 45, lab, fontsize=8.2, color=MUTED, ha="center",
