@@ -100,7 +100,11 @@ STORAGE_SLOTS = {
 # 放到生产区（x≈25~63）正北的中央，到两端的距离都缩短，
 # 而且仍避开所有取放位与生产通道（生产区 y=20.8~39.2）。
 PARK = dict(y=46.0, x0=34.0, dx=3.50, n=10)   # 一排 10 个待命位，与默认车队一致
-CHARGER_CABINET_DY = -1.20
+# 充电位：机柜在停靠点南侧，AGV 停在机柜前方的停靠点。
+# 这个偏移只被 `static_boxes()`（规划器障碍集）用到，**全文件只定义一次**：
+# 早前这里和文件下方各有一份（-1.20 / -0.85），后者静默覆盖前者，
+# 改其中一个不会有任何效果 —— 典型的"一个量两个来源"。
+CHARGER_CABINET_DY = -0.85
 CHARGERS = {
     "charger_0": dict(x=60.0, y=46.0, rgb=(0.10, 0.60, 0.85)),
     "charger_1": dict(x=64.0, y=46.0, rgb=(0.10, 0.60, 0.85)),
@@ -108,9 +112,8 @@ CHARGERS = {
 }
 
 
-# 储料区：货架贴墙，取放位在货架前的通道
-
-# 取放位：空筒库与梳棉通道同高，成品库与粗纱通道同高
+# 储料区：货架贴东西墙，取放位在货架前的通道上。
+# 取放位与产线同高，车从货架正前方直线取放。
 
 # 空筒取放位数量上限（第 52 节）。
 #
@@ -119,22 +122,28 @@ CHARGERS = {
 # 工序才腾出空位、放一件新料。实测 4 台车 300 s 只做出 16~22 件，
 # 而 16 件物料里结束时还有 12 件躺在库里 —— 说明**产量主要卡在喂料并发**，
 # 不在车队。做成可调参数是为了能直接验证这句话：翻倍之后产量该上去。
-EMPTY_SLOT_YS = [3.0, 6.0, 9.0, 12.0]
-EXTRA_EMPTY_SLOT_YS = [4.5, 7.5, 10.5, 13.5]      # 与上面交错，避免并排过近
+EMPTY_SLOT_PITCH = 1.50            # 超过 4 个位时的交错间距
 EMPTY_SLOTS_MAX = 8
 
 
 def empty_slot_ys(n: int) -> list[float]:
-    """按需要的取放位数量给出 y 坐标（4 个 -> 原布局，8 个 -> 交错铺满）。"""
+    """空筒取放位的 y 坐标：**必须落在空筒货架正前方**。
+
+    曾经这里是 ``[3, 6, 9, 12]``（小厂区时代的遗留，那时厂房只有 16 m 高）。
+    厂房放大到 120×60 m 之后，空筒货架在 y=24.75~35.25，而这些取放位仍在
+    y=3~12 —— 车要跑到货架南边 12~21 m 的空地上"取"一个放在货架上的空筒，
+    平板上看就是几个孤零零的方框飘在车间南侧，与货架完全脱开。
+    4 个位以内直接用与产线对齐的 ``STORAGE_SLOT_YS``；更多的位在货架长度内
+    交错铺开（8 个 × 1.5 m = 10.5 m，正好等于货架长度）。
+    """
     n = max(1, min(int(n), EMPTY_SLOTS_MAX))
-    if n <= len(EMPTY_SLOT_YS):
-        return EMPTY_SLOT_YS[:n]
-    return sorted(EMPTY_SLOT_YS + EXTRA_EMPTY_SLOT_YS[: n - len(EMPTY_SLOT_YS)])
+    if n <= len(STORAGE_SLOT_YS):
+        return STORAGE_SLOT_YS[:n]
+    center = STORAGE["empty"]["y"]
+    span = (n - 1) * EMPTY_SLOT_PITCH
+    return [round(center - span / 2 + EMPTY_SLOT_PITCH * k, 3) for k in range(n)]
 
-# 充电位：机柜贴墙，AGV 停在机柜前方的停靠点
-CHARGER_CABINET_DY = -0.85          # 机柜相对停靠点的偏移（贴向下墙）
-
-# AGV 待命区（贴下墙一字排开，避开所有取放位）
+# 充电位机柜偏移见上方 `CHARGER_CABINET_DY` 的定义。
 
 FLEET_COLORS = [
     (0.13, 0.42, 0.78), (0.90, 0.45, 0.10), (0.16, 0.62, 0.42), (0.72, 0.20, 0.32),
@@ -285,11 +294,20 @@ def all_station_points() -> dict:
 
 
 # 正常生产时通道里本来就有的东西：待转运的条筒托盘、清洁工具车、临时堆放的棉包。
-# 它们不在机台行列上，而是压在**通道中间**——车必须中途绕开，而不是沿着机弄直着走。
+# 它们不在机台行列上，而是压在**工序之间的横向通道中间**——车必须中途绕开，
+# 而不是沿着机弄直着走。
+#
+# 坐标由工序位置推出。原来是写死的 (9.9, 7.5)/(15.6, 7.5)/(20.8, 4.5)：
+# 那是 26×16 m 小厂房的通道位置；厂房放大后那一带（y=4.5~7.5）根本没有车经过，
+# 三个障碍物变成了空地上的一堆装饰，避障演示也就没了。
+_STAGE_MIDS = [(STAGES[i]["done_x"] + STAGES[i + 1]["wait_x"]) / 2.0
+               for i in range(len(STAGES) - 1)]
+_MID_LANE_YS = [LANES[i] + _LANE_DY / 2.0 for i in range(len(LANES) - 1)]
 AISLE_OBSTACLES = [
-    dict(name="pallet_a", x=9.90, y=7.50, sx=1.10, sy=0.90, cn="待转条筒"),
-    dict(name="cart_b",   x=15.60, y=7.50, sx=0.90, sy=0.80, cn="清洁车"),
-    dict(name="bale_c",   x=20.80, y=4.50, sx=1.20, sy=0.95, cn="棉包"),
+    dict(name="pallet_a", x=_STAGE_MIDS[0], y=_MID_LANE_YS[0], sx=1.10, sy=0.90, cn="待转条筒"),
+    dict(name="cart_b",   x=_STAGE_MIDS[0], y=_MID_LANE_YS[-1], sx=0.90, sy=0.80, cn="清洁车"),
+    dict(name="bale_c",   x=_STAGE_MIDS[-1], y=_MID_LANE_YS[len(_MID_LANE_YS) // 2],
+         sx=1.20, sy=0.95, cn="棉包"),
 ]
 
 

@@ -66,17 +66,26 @@ STAGE_EN = {"carding": "CARDING", "drawing": "DRAWING", "roving": "ROVING"}
 CJK = ["Noto Sans CJK JP", "Noto Sans CJK SC", "DejaVu Sans"]
 
 # 画布与地图区域（像素）
-CW, CH = 1240, 680
-# 地图框：高度尽量占满，好让"视口放大"有空间可用。
-# 原为 b=74,t=596（高 522，比例 1.61:1），把上下的留白收紧到
-# b=52,t=642（高 590，比例 1.42:1），更接近典型演示视口的比例。
-MAP = dict(l=40, r=890, b=52, t=642)
+#
+# 版面是**算出来的，不是试出来的**：厂房 120×60 m 是 2:1，地图框就取 2:1
+# （920×460），上边紧贴顶栏、下边接图例，中间不留横向空带；右栏取够放两列
+# 车队列表的宽度(264)。画布高度 = 顶栏 58 + 地图 460 + 图例 ~92 = 610。
+#
+# 上一版是 CW×CH = 1240×680、地图框 1.44:1，比厂房"方"：默认视图下厂房上下
+# 各被切掉一大块，上次录制只好用 `--view 4,17,70,43` 放大局部 —— 结果东端的
+# 成品库（x=106.6）整段落在视口外，"粗纱成品入库"这条腿在动图里从没出现过。
+# 现在的原则：**默认视图就是整个厂房**，不靠裁视口换清晰度。
+CW, CH = 1240, 610
+TOPBAR_H = 58
+MAP = dict(l=30, r=950, b=92, t=552)       # 920×460 = 2:1，与厂房同比例
+PANEL_X0, PANEL_X1 = 964, CW - 12          # 右侧数据面板（264 宽）
+LEG_RULE_Y = MAP["b"] - 30                 # 图例分隔线
+LEG_ITEM_Y = MAP["b"] - 58                 # 图例文字基线
 
 
 # 视口：要显示的世界矩形 (x0, y0, x1, y1)。默认整个厂房。
-# 为什么需要它：厂区 120×60 m、车 Ø0.50 m，全幅画在 840 px 宽的地图里
-# 每米只有 7 px，车不到 4 px —— 看不清也谈不上演示。
-# 传入视口即可放大到实际活动区（如生产段 x=20~70）。
+# 仍然保留 `--view`：出单帧静图（如 README 里的细节图）时放大局部很好用，
+# 但**动图不要再裁**，否则又会把某一段流程拍到画外。
 VIEW = {"x0": 0.0, "y0": 0.0, "x1": float(L.BUILDING["w"]), "y1": float(L.BUILDING["h"])}
 
 
@@ -106,28 +115,67 @@ def mix(c, f):
     return f"#{int(r + (255 - r) * f):02x}{int(g + (255 - g) * f):02x}{int(b + (255 - b) * f):02x}"
 
 
+def _stage_zones():
+    """三个工序区的 x 边界，由各自的等料位/完工位推出。"""
+    st = L.STAGES
+    out = []
+    for i, s in enumerate(st):
+        left = s["wait_x"] - 1.00 if i == 0 else (s["wait_x"] + st[i - 1]["done_x"]) / 2.0
+        right = ((st[i + 1]["wait_x"] + s["done_x"]) / 2.0 if i + 1 < len(st)
+                 else s["done_x"] + 1.10)
+        out.append((left, right))
+    return out
+
+
+def lane_band():
+    """产线带的 y 范围 (band0, band1, band_mid)：平面图纵向排版全部由它推出。"""
+    ys = [y for s in L.STAGES for y in s["lanes"]]
+    return min(ys) - 2.6, max(ys) + 2.6, (min(ys) + max(ys)) / 2.0
+
+
 def draw_floor(ax):
-    """车间底图：地面、机器、货架、停靠位、分区标注。只画一次。"""
-    _, _, s = w2p(0, 0)
-    bx, by, _ = w2p(0, 0)
+    """车间底图：地坪、柱网、分区、机台、货架、取放位、待命区、充电位。
+
+    只画一次。**所有坐标都从 ``layout`` 推出，不写死世界坐标** ——
+    上一版这里残留着小厂区（26×16 m）时代的三处写死值：
+      * 工序区名画在 x=7.0 / 13.6 / 18.7（那是旧厂房的工序位置，
+        新厂房里这三个点全在空筒库里，于是"梳棉区"标在货架上）；
+      * 充电位方框画在 x=3.6~7.3（真实充电位在 x=60~68）；
+      * 货架名画在 y=0.9（货架实际在 y=24.75~35.25）。
+    用户看到的"整个页面都不对"就是这三处。
+    """
+    bx, by, s = w2p(0, 0)
     W, H = L.BUILDING["w"], L.BUILDING["h"]
+    band0, band1, band_mid = lane_band()
     ax.add_patch(Rectangle((bx, by), W * s, H * s, facecolor="#ffffff",
                            edgecolor="none", zorder=1))
-    # 分区底色：按工序把 x 切成三段
-    # 分区边界由工序的等料位/完工位推出（写死会在改净宽后错位）
-    bounds = L.world_bounds()
-    mids = [(L.STAGES[i]["done_x"] + L.STAGES[i + 1]["wait_x"]) / 2
-            for i in range(len(L.STAGES) - 1)]
-    cuts = [bounds[0]] + mids + [bounds[1]]
-    tints = ("#eef2ee", "#eceff4", "#f1eef4")
-    for k, (x0, x1) in enumerate(zip(cuts, cuts[1:])):
-        col = tints[min(k, len(tints) - 1)]
-        px, py, _ = w2p(x0, 0)
-        ax.add_patch(Rectangle((px, py), (x1 - x0) * s, H * s, facecolor=col,
-                               edgecolor="none", zorder=2))
-    for x in range(1, int(bounds[1]) + 1, 2):      # 柱网（到厂房东界为止）
-        px, py, _ = w2p(x, 0)
-        ax.plot([px, px], [py, py + H * s], color=RULE, lw=0.4, alpha=0.5, zorder=3)
+    # 柱网（按柱距铺满整跨，给空旷地坪一点尺度参照）
+    for k in range(1, int(W // L.COLUMN_PITCH) + 1):
+        gx = L.COLUMN_PITCH * k
+        if gx >= W:
+            break
+        px, py, _ = w2p(gx, 0)
+        ax.plot([px, px], [py, py + H * s], color=RULE, lw=0.4, alpha=0.55, zorder=3)
+    for k in range(1, int(H // L.COLUMN_PITCH) + 1):
+        gy = L.COLUMN_PITCH * k
+        if gy >= H:
+            break
+        px, py, _ = w2p(0, gy)
+        ax.plot([px, px + W * s], [py, py], color=RULE, lw=0.4, alpha=0.35, zorder=3)
+
+    # 工序区：底色 + 区名 + 工位数，边界与名字都由布局推出
+    for (zx0, zx1), st in zip(_stage_zones(), L.STAGES):
+        rgb = L.MACHINE_SPEC[st["name"]]["rgb"]
+        px, py, _ = w2p(zx0, band0)
+        ax.add_patch(Rectangle((px, py), (zx1 - zx0) * s, (band1 - band0) * s,
+                               facecolor=mix(rgb, 0.90), edgecolor=mix(rgb, 0.42),
+                               lw=1.0, ls=(0, (5, 3)), zorder=2))
+        ax.text(px + 5, py + (band1 - band0) * s - 9, f"{st['cn']}区", fontsize=9.0,
+                fontweight="bold", color=hexc(rgb), va="center", zorder=8)
+        ax.text(px + 5, py + (band1 - band0) * s - 22,
+                f"{STAGE_EN[st['name']]} × {len(st['lanes'])}", fontsize=6.6,
+                color=MUTED, va="center", zorder=8)
+
     # 机台
     for name, rect, h, rgb, stage, lane in L.all_machines():
         x0, y0, x1, y1 = rect
@@ -135,53 +183,66 @@ def draw_floor(ax):
         ax.add_patch(Rectangle((px, py), (x1 - x0) * s, (y1 - y0) * s,
                                facecolor=mix(rgb, 0.34), edgecolor=hexc(rgb), lw=1.3,
                                zorder=5))
-    # 货架
-    for zone, (x0, y0, x1, y1) in L.rack_rects().items():
+
+    # 工序流向：空筒库 → 成品库，走产线带中线
+    fx0, fy0, _ = w2p(L.STORAGE_SLOTS["empty"]["x"] - 1.0, band_mid)
+    fx1, _, _ = w2p(L.STORAGE_SLOTS["red"]["x"] + 0.2, band_mid)
+    ax.annotate("", xy=(fx1, fy0), xytext=(fx0, fy0),
+                arrowprops=dict(arrowstyle="-|>", color="#b3ada0", lw=1.2,
+                                linestyle=(0, (7, 4))), zorder=2)
+
+    # 货架（空筒库 / 成品库）：位置与名字都来自 layout
+    for zone, rect in L.rack_rects().items():
+        x0, y0, x1, y1 = rect
         px, py, _ = w2p(x0, y0)
         ax.add_patch(Rectangle((px, py), (x1 - x0) * s, (y1 - y0) * s,
                                facecolor="#e6e2d8", edgecolor=MUTED, lw=0.9,
                                hatch="////", zorder=4))
-    # 停靠位
-    for x, y in L.all_station_points().values():
-        px, py, _ = w2p(x, y)
-        ax.add_patch(Rectangle((px - 2.6, py - 2.6), 5.2, 5.2, facecolor="#ffffff",
-                               edgecolor=MUTED, lw=0.7, zorder=6))
-    # 充电位
-    for spec in (L.CHARGERS if isinstance(L.CHARGERS, list) else L.CHARGERS.values()):
-        cx, cy = spec if isinstance(spec, tuple) else (spec["x"], spec["y"])
-        px, py, _ = w2p(cx, cy)
-        ax.add_patch(Rectangle((px - 3.4, py - 3.4), 6.8, 6.8, facecolor="#dce9f2",
-                               edgecolor=BLUE, lw=0.9, zorder=6))
+        ax.text(px + (x1 - x0) * s / 2, py + (y1 - y0) * s + 8,
+                L.STORAGE[zone]["cn"], ha="center", va="bottom", fontsize=8.8,
+                color=INK, fontweight="bold", zorder=8)
+
+    # 取放位（虚线小方框）：货架前的实际停靠点
+    for pt in L.STORAGE_SLOT_POINTS.values():
+        px, py, _ = w2p(pt["x"], pt["y"])
+        ax.add_patch(Rectangle((px - 3.0, py - 3.0), 6.0, 6.0, facecolor="#ffffff",
+                               edgecolor=MUTED, lw=0.7, ls=(0, (2, 1.6)), zorder=6))
+    # 工位停靠位（等料位 / 完工位）
+    for s_ in L.STAGES:
+        for lane in range(len(s_["lanes"])):
+            for kind in ("waiting", "finished"):
+                st = L.station(s_["name"], kind, lane)
+                px, py, _ = w2p(st["x"], st["y"])
+                ax.add_patch(Rectangle((px - 2.6, py - 2.6), 5.2, 5.2,
+                                       facecolor="#ffffff", edgecolor=MUTED, lw=0.7,
+                                       zorder=6))
+    # 通道里的临时障碍（车会绕开它们，画出来画面才说得通）
+    for o in L.AISLE_OBSTACLES:
+        px, py, _ = w2p(o["x"] - o["sx"] / 2, o["y"] - o["sy"] / 2)
+        ax.add_patch(Rectangle((px, py), o["sx"] * s, o["sy"] * s,
+                               facecolor="#c9c1a8", edgecolor="#8d8468", lw=0.8,
+                               zorder=6))
+    # 充电位（真实位置在 x=60/64/68）
+    cxs = [c["x"] for c in L.CHARGERS.values()]
+    cys = [c["y"] for c in L.CHARGERS.values()]
+    cpx0, cpy0, _ = w2p(min(cxs) - 1.2, min(cys) - 1.2)
+    cpx1, cpy1, _ = w2p(max(cxs) + 1.2, max(cys) + 1.2)
+    ax.add_patch(Rectangle((cpx0, cpy0), cpx1 - cpx0, cpy1 - cpy0,
+                           facecolor="#dce9f2", edgecolor=BLUE, lw=0.9,
+                           ls=(0, (3, 2)), zorder=4))
+    ax.text((cpx0 + cpx1) / 2, cpy0 - 6, "充电位 CHARGER", ha="center", va="top",
+            fontsize=7.6, color="#4d7794", zorder=8)
+    # 待命区
+    pk = L.PARK
+    px0, py0, _ = w2p(pk["x0"] - 0.75, pk["y"] - 0.75)
+    px1, py1, _ = w2p(pk["x0"] + pk["dx"] * (pk["n"] - 1) + 0.75, pk["y"] + 0.75)
+    ax.add_patch(Rectangle((px0, py0), px1 - px0, py1 - py0, facecolor="#efe9d8",
+                           edgecolor="#b9ad86", lw=0.9, ls=(0, (3, 2)), zorder=4))
+    ax.text((px0 + px1) / 2, py1 + 6, "待命区 PARK", ha="center", va="bottom",
+            fontsize=7.6, color="#8a7d52", zorder=8)
     # 厂房轮廓最后画（zorder 高），否则会被分区底色盖掉
     ax.add_patch(Rectangle((bx, by), W * s, H * s, facecolor="none",
                            edgecolor="#8d8880", lw=1.8, zorder=12))
-    # 待命区与充电位：车会停到这里，不标出来读者会以为是"没有图例的地方"
-    pk = L.PARK
-    px0, py0, _ = w2p(pk["x0"] - 0.7, pk["y"] - 0.75)
-    px1, py1, _ = w2p(pk["x0"] + pk["dx"] * (pk["n"] - 1) + 0.7, pk["y"] + 0.75)
-    ax.add_patch(Rectangle((px0, py0), px1 - px0, py1 - py0, facecolor="#efe9d8",
-                           edgecolor="#b9ad86", lw=0.9, ls=(0, (3, 2)), zorder=4))
-    ax.text((px0 + px1) / 2, py0 - 7, "待命区 PARK", ha="center", va="top",
-            fontsize=7.8, color="#8a7d52", zorder=8)
-    for name, spec in (("充电位 CHARGER", None),):
-        pass
-    cx0, cy0, _ = w2p(3.6, pk["y"] - 0.75)
-    cx1, cy1, _ = w2p(7.3, pk["y"] + 0.75)
-    ax.add_patch(Rectangle((cx0, cy0), cx1 - cx0, cy1 - cy0, facecolor="#e2edf5",
-                           edgecolor="#8bb0c9", lw=0.9, ls=(0, (3, 2)), zorder=4))
-    ax.text((cx0 + cx1) / 2, cy0 - 7, "充电位 CHARGER", ha="center", va="top",
-            fontsize=7.8, color="#4d7794", zorder=8)
-
-    # 分区标注
-    for stage, x in (("carding", 7.0), ("drawing", 13.6), ("roving", 18.7)):
-        px, py, _ = w2p(x, L.BUILDING["h"] - 0.9)
-        ax.text(px, py, f"{STAGE_CN[stage]}区  {STAGE_EN[stage]}", ha="center",
-                va="center", fontsize=8.6, color=MUTED, zorder=8)
-    for zone, cn in (("empty", "空筒库"), ("red", "成品库")):
-        z = L.STORAGE[zone]
-        px, py, _ = w2p(z["x"], 0.9)
-        ax.text(px, py, cn, ha="center", va="center", fontsize=8.6, color=MUTED,
-                zorder=8, rotation=90)
 
 
 def short_station(name: str) -> str:
@@ -248,8 +309,8 @@ def text_w(txt: str, fs: float) -> float:
 
 def draw_legend(ax):
     """底部通栏图例：说明三角/方框/连线/停靠位/货架各代表什么。"""
-    y = 34
-    ax.plot([0, CW], [70, 70], color=RULE, lw=1.0)
+    y = LEG_ITEM_Y
+    ax.plot([0, CW], [LEG_RULE_Y, LEG_RULE_Y], color=RULE, lw=1.0)
     x = 22.0
     ax.text(x, y + 14, "图例 LEGEND", fontsize=8.2, fontweight="bold", color=MUTED,
             va="center")
@@ -280,7 +341,9 @@ def draw_legend(ax):
         ax.add_patch(Rectangle((px, y + 1), 13, 10, facecolor="#e6e2d8",
                                edgecolor=MUTED, lw=0.9, hatch="////"))
 
-    item(tri, "AGV（编号见车旁）", 12)
+    # 三角标记是固定像素尺寸的"车辆标记"，不是真实占地 —— 明说一句，
+    # 免得读者拿它和旁边的机台比大小。
+    item(tri, "AGV（Ø0.5 m，在途时标编号）", 12)
     item(square, "待办任务", 14)
     item(route, "在途路线：实线=已行驶，虚线=剩余规划", 35)
     item(dock, "工位停靠位", 13)
@@ -289,7 +352,21 @@ def draw_legend(ax):
             fontsize=8.2, color=MUTED, ha="right", va="center")
 
 
-def draw_robot(ax, rid, x, y, yaw, s, trail):
+def draw_robot(ax, rid, x, y, yaw, trail, active, label_slots=None):
+    """车 = 固定像素尺寸的三角箭头（+ 有任务时在车旁标编号）。
+
+    箭头**不按世界尺度缩放**：车只有 Ø0.50 m，120 m 厂房下不到 4 px，
+    按真实尺寸画就是几个看不见的点。固定尺寸 = 车间平面图上"车辆标记"的常规画法，
+    尺度关系由布局本身（机台、通道、货架）体现。
+
+    编号只在车**有任务**时画：10 台车停在待命区时彼此间距只有 25 px，
+    而 "AGV10" 标签要 29 px 宽，全画出来就是一团压在车上的字。
+    待命车的身份在右侧面板里本来就有（带颜色和电量）。
+
+    在途的车也可能彼此很近（实测 AGV5/AGV6 同时停靠相邻工位时标签重叠 2 px），
+    所以标签先试"车上方"，撞到已放置的标签就试"车下方"，都撞就不画 ——
+    ``label_slots`` 由调用方按 rid 顺序传进来，保证同一台车每次的取舍一致。
+    """
     px, py, _ = w2p(x, y)
     col = FLEET[rid % len(FLEET)]
     if len(trail) > 1:
@@ -297,16 +374,60 @@ def draw_robot(ax, rid, x, y, yaw, s, trail):
         ax.plot(xs, ys, color=col, lw=1.4, alpha=0.28, zorder=10,
                 solid_capstyle="round")
     for i, k in enumerate((1.0, 0.66, 0.34)):        # 三层箭头，最外层做描边
-        tri = [(10.0 * k, 0), (-6.2 * k, 6.6 * k), (-6.2 * k, -6.6 * k)]
+        tri = [(11.0 * k, 0), (-6.8 * k, 7.2 * k), (-6.8 * k, -7.2 * k)]
         pts = [(px + a * math.cos(yaw) - b * math.sin(yaw),
                 py + a * math.sin(yaw) + b * math.cos(yaw)) for a, b in tri]
         ax.add_patch(Polygon(pts, closed=True,
                              facecolor=INK if i == 0 else col,
                              edgecolor="none", zorder=11 + i))
-    ax.text(px, py - 15, f"AGV{rid}", ha="center", va="center", fontsize=7.6,
-            color=col, fontweight="bold", zorder=15,
-            bbox=dict(boxstyle="round,pad=0.12", facecolor=PANEL, edgecolor="none",
-                      alpha=0.85))
+    if not active:
+        return
+    txt = f"AGV{rid}"
+    w = text_w(txt, 8.0) + 8.0
+    for dy in (-16.0, 19.0):
+        box = (px - w / 2, py + dy - 6.5, px + w / 2, py + dy + 6.5)
+        if label_slots is not None and any(
+                box[0] < s[2] and s[0] < box[2] and box[1] < s[3] and s[1] < box[3]
+                for s in label_slots):
+            continue
+        if label_slots is not None:
+            label_slots.append(box)
+        ax.text(px, py + dy, txt, ha="center", va="center", fontsize=8.0,
+                color=col, fontweight="bold", zorder=15,
+                bbox=dict(boxstyle="round,pad=0.12", facecolor=PANEL,
+                          edgecolor="none", alpha=0.85))
+        return
+
+
+def _report_bbox(ax, fig):
+    """打印文字包围盒、越界文字、以及互相重叠的文字对。
+
+    为什么需要：版面是"给眼睛看的"，而自动检查只能查几何数字。改字号/挪面板
+    之后"有没有压字"没法靠数值断言 —— 用 matplotlib 真实的文字包围盒互相求交
+    就可以。做规划图时踩过一次：10 台车停在待命区，编号标签彼此间距 25 px、
+    而 "AGV10" 要 29 px 宽，整片糊在一起，肉眼看动图才发现。
+    """
+    ren = fig.canvas.get_renderer()
+    items = []
+    for t in ax.texts:
+        s = t.get_text()
+        if not s.strip():
+            continue
+        bb = t.get_window_extent(renderer=ren)
+        items.append((s, bb))
+    print(f"  [bbox] {len(items)} 个文字")
+    for s, bb in items:
+        if bb.x0 < -1 or bb.y0 < -1 or bb.x1 > CW + 1 or bb.y1 > CH + 1:
+            print(f"    !! 越界 {s!r} bbox=({bb.x0:.0f},{bb.y0:.0f},"
+                  f"{bb.x1:.0f},{bb.y1:.0f})")
+    for i in range(len(items)):
+        for j in range(i + 1, len(items)):
+            a, b = items[i][1], items[j][1]
+            ox = min(a.x1, b.x1) - max(a.x0, b.x0)
+            oy = min(a.y1, b.y1) - max(a.y0, b.y0)
+            if ox > 1.5 and oy > 1.5:
+                print(f"    ~~ 重叠 {ox:.0f}x{oy:.0f}px: {items[i][0]!r} <-> "
+                      f"{items[j][0]!r}")
 
 
 def main() -> int:
@@ -326,6 +447,8 @@ def main() -> int:
                     help="只渲染这个世界矩形（放大局部；默认整个厂房）")
     ap.add_argument("--still-scale", type=float, default=1.0,
                     help="静图缩放，>1 更清晰")
+    ap.add_argument("--debug-bbox", action="store_true",
+                    help="打印文字包围盒互相重叠的对（改版面时用来查压字）")
     args = ap.parse_args()
 
     if args.view:
@@ -392,12 +515,12 @@ def main() -> int:
         ax.axis("off")
 
         # ---- 顶栏 ----
-        ax.add_patch(Rectangle((0, CH - 62), CW, 62, facecolor=PANEL,
+        ax.add_patch(Rectangle((0, CH - TOPBAR_H), CW, TOPBAR_H, facecolor=PANEL,
                                edgecolor="none"))
-        ax.plot([0, CW], [CH - 62, CH - 62], color=RULE, lw=1.0)
-        ax.text(20, CH - 27, "棉纺车间 · 多 AGV 物料搬运全过程", fontsize=15.5,
+        ax.plot([0, CW], [CH - TOPBAR_H, CH - TOPBAR_H], color=RULE, lw=1.0)
+        ax.text(20, CH - 24, "棉纺车间 · 多 AGV 物料搬运全过程", fontsize=15.5,
                 fontweight="bold", color=INK, va="center")
-        ax.text(20, CH - 48, "FLEETFLOW-ROS2 · MATERIAL TRANSPORT, DISPATCH TO DELIVERY",
+        ax.text(20, CH - 44, "FLEETFLOW-ROS2 · MATERIAL TRANSPORT, DISPATCH TO DELIVERY",
                 fontsize=7.4, color=MUTED, va="center")
         done = sum(1 for t in tasks if t.get("t_done") is not None
                    and tt >= t["t_done"])
@@ -410,10 +533,10 @@ def main() -> int:
                                              ("已完成", done, GREEN))):
             # KPI 从右往左排，并给右侧面板标题留出足够间距：
             # 原来 x 从 CW-300 起、步长 100，第三个数字会顶到面板标题上。
-            x = CW - 90 - (2 - i) * 96
-            ax.text(x, CH - 24, f"{val:>3d}", fontsize=17, fontweight="bold",
+            x = CW - 88 - (2 - i) * 92
+            ax.text(x, CH - 22, f"{val:>3d}", fontsize=17, fontweight="bold",
                     family="monospace", color=col, ha="center", va="center")
-            ax.text(x, CH - 45, lab, fontsize=8.2, color=MUTED, ha="center",
+            ax.text(x, CH - 43, lab, fontsize=8.2, color=MUTED, ha="center",
                     va="center")
 
         draw_floor(ax)
@@ -431,7 +554,10 @@ def main() -> int:
 
         # ---- 车队 ----
         paths = rec.get("paths", {})
-        for r in rec["robots"]:
+        label_slots: list[tuple[float, float, float, float]] = []
+        # 按 rid 顺序画，标签避让的取舍才与遍历顺序无关（否则同一台车的标签
+        # 会在相邻帧之间上下跳）
+        for r in sorted(rec["robots"], key=lambda z: z[0]):
             rid, tid = r[0], r[5]
             # 当前任务的起点：向前回溯到任务号发生变化的下一帧
             j = idx
@@ -448,16 +574,14 @@ def main() -> int:
             col = FLEET[rid % len(FLEET)]
             if tid != -1:
                 draw_route(ax, trail, rem, col, 1.0)
-            short = [(w2p(z[1], z[2])[0], w2p(z[1], z[2])[1])
-                     for z in rows[max(0, idx - 20):idx + 1]["robots"]
-                     if z[0] == rid] if False else None
-            tail = [(w2p(z[1], z[2])[0], w2p(z[1], z[2])[1])
-                    for k in range(max(0, idx - 20), idx + 1)
-                    for z in rows[k]["robots"] if z[0] == rid]
-            draw_robot(ax, rid, r[1], r[2], r[3], None, [] if tid != -1 else tail)
+            # 待命车不再画尾迹：这里原来把 **已经换算成像素** 的 `tail` 传进
+            # draw_robot，而它内部又做了一次 w2p —— 双重投影，尾迹画在错误位置。
+            # 待命车本来就不动，尾迹没有信息量，直接不画。
+            draw_robot(ax, rid, r[1], r[2], r[3], [], active=tid != -1,
+                       label_slots=label_slots)
 
         # ---- 右栏 ----
-        px0, px1 = 906, CW - 20
+        px0, px1 = PANEL_X0, PANEL_X1
         ax.add_patch(Rectangle((px0, MAP["b"]), px1 - px0,
                                MAP["t"] - MAP["b"], facecolor=PANEL,
                                edgecolor=RULE, lw=1.0))
@@ -485,20 +609,30 @@ def main() -> int:
         ax.text(px0 + 16, yy, "车队状态", fontsize=11.5, fontweight="bold",
                 color=INK, va="center")
         ax.text(px0 + 16, yy - 18, "FLEET", fontsize=7.0, color=MUTED, va="center")
-        yy -= 38
-        for r in rec["robots"]:
-            rid, st, bat = r[0], r[4], r[6]
+        yy -= 40
+        # 车队列表**分两列**：10 台车单列要 190 px，会把下面的"在途任务"
+        # 整段挤出面板（原来 10 台车时那一段是直接被 if 判掉、根本不显示的，
+        # 而在途任务是这张图上信息量最大的一块）。
+        rob = rec["robots"]
+        per_col = max(1, (len(rob) + 1) // 2)
+        col_w = (px1 - px0 - 32) / 2.0
+        for i, r in enumerate(rob):
+            c, row = divmod(i, per_col)
+            cx = px0 + 18 + c * col_w
+            ry = yy - row * 19
+            rid, bat = r[0], r[6]
             col = FLEET[rid % len(FLEET)]
-            ax.add_patch(Polygon([(px0 + 20, yy + 4), (px0 + 30, yy + 9),
-                                  (px0 + 20, yy + 14)], closed=True,
+            ax.add_patch(Polygon([(cx, ry + 4), (cx + 9, ry + 9),
+                                  (cx, ry + 14)], closed=True,
                                  facecolor=col, edgecolor="none"))
-            ax.text(px0 + 38, yy + 9, f"AGV{rid}", fontsize=8.6, color=INK,
+            ax.text(cx + 14, ry + 9, f"AGV{rid}", fontsize=8.4, color=INK,
                     va="center")
-            ax.text(px1 - 16, yy + 9, f"{bat:4.0f}%", fontsize=8.6,
-                    family="monospace", color=MUTED, ha="right", va="center")
-            yy -= 19
+            bx = cx + col_w - 10
+            ax.text(bx, ry + 9, f"{bat:3.0f}%", fontsize=8.4, family="monospace",
+                    color=MUTED, ha="right", va="center")
+        yy -= per_col * 19 + 6
         # ---- 在途任务清单 ----
-        if yy > MAP["b"] + 78:
+        if yy > MAP["b"] + 96:
             ax.plot([px0 + 16, px1 - 16], [yy + 6, yy + 6], color=RULE, lw=0.9)
             ax.text(px0 + 16, yy - 12, "在途任务", fontsize=10.4, fontweight="bold",
                     color=INK, va="center")
@@ -512,26 +646,30 @@ def main() -> int:
                 col, cn = MAT.get(t["material"], (MUTED, ""))
                 ax.add_patch(Rectangle((px0 + 18, ry - 5), 9, 10, facecolor=col,
                                        edgecolor="none"))
-                ax.text(px0 + 33, ry, f"T{t['id']}", fontsize=7.4,
+                ax.text(px0 + 32, ry, f"T{t['id']}", fontsize=7.4,
                         family="monospace", color=MUTED, va="center")
-                ax.text(px0 + 62, ry, f"{short_station(t['src'])}→{short_station(t['dst'])}",
-                        fontsize=7.8, color=INK, va="center")
+                ax.text(px0 + 58, ry, f"{short_station(t['src'])}→{short_station(t['dst'])}",
+                        fontsize=7.6, color=INK, va="center")
                 ax.text(px1 - 16, ry, f"AGV{t.get('robot', 0)}", fontsize=7.4,
-                        family="monospace", color=col, ha="right", va="center")
+                        family="monospace", color=FLEET[t.get("robot", 0) % len(FLEET)],
+                        ha="right", va="center")
                 ry -= 17
             if not rows_t:
                 ax.text(px0 + 18, ry, "—", fontsize=8.0, color=RULE, va="center")
 
-        # ---- 时间轴 ----
+        # ---- 时间轴（单行：进度条 + 百分比文字，省出纵向空间给在途任务） ----
         frac = (tt - t0) / max(1e-6, t1 - t0)
-        ax.add_patch(Rectangle((px0 + 16, MAP["b"] + 18), px1 - px0 - 32, 8,
+        bar_y = MAP["b"] + 14
+        ax.add_patch(Rectangle((px0 + 16, bar_y), px1 - px0 - 110, 8,
                                facecolor="#e4e0d6", edgecolor="none"))
-        ax.add_patch(Rectangle((px0 + 16, MAP["b"] + 18), (px1 - px0 - 32) * frac,
+        ax.add_patch(Rectangle((px0 + 16, bar_y), (px1 - px0 - 110) * frac,
                                8, facecolor=GREEN, edgecolor="none"))
-        ax.text(px0 + 16, MAP["b"] + 38, f"运行进度  {frac * 100:3.0f}%",
-                fontsize=8.4, color=MUTED, va="center")
+        ax.text(px1 - 16, bar_y + 4, f"进度 {frac * 100:3.0f}%", fontsize=8.4,
+                color=MUTED, ha="right", va="center")
 
         fig.canvas.draw()
+        if args.debug_bbox:
+            _report_bbox(ax, fig)
         buf = np.asarray(fig.canvas.buffer_rgba())
         frames.append(Image.fromarray(buf).convert("RGB"))
         plt.close(fig)

@@ -87,19 +87,27 @@ def building():
             ("win_w", -t / 2, H / 2, t + 0.02, H - 0.5)]):
         add(box(nm, cx, cy, 4.10, sx, sy, 1.30, (0.42, 0.58, 0.70), a=0.55, rough=0.15, metal=0.1))
 
-    # 柱网
+    # 柱网：沿厂房长边按柱距铺满。
+    # 原为 x ∈ {0.55, 6.5+0.55, 13+0.55, W-0.55} 四根 —— 那是 26 m 小厂房的数量，
+    # 厂房变成 120 m 之后柱子只在西头，看起来像"半个车间被截断"。
+    cols = [0.55] + [L.COLUMN_PITCH * k + 0.55
+                     for k in range(1, int(W // L.COLUMN_PITCH) + 1)]
+    cols = [x for x in cols if x < W - 0.55] + [W - 0.55]
     n = 0
-    for x in [0.55, L.COLUMN_PITCH + 0.55, 2 * L.COLUMN_PITCH + 0.55, W - 0.55]:
+    for x in cols:
         for y in [0.55, H - 0.55]:
             add(box(f"col_{n}", x, y, WH / 2, L.COLUMN_SIZE, L.COLUMN_SIZE, WH,
                     (0.80, 0.80, 0.78), rough=0.85))
             n += 1
     # 屋架 + 灯具（不铺屋面板，否则俯视机位被挡）
-    for i, x in enumerate([L.TRUSS_PITCH * k + 1.0 for k in range(4)]):
+    trusses = [L.TRUSS_PITCH * k + 1.0
+               for k in range(int((W - 2.0) // L.TRUSS_PITCH))]
+    for i, x in enumerate(trusses):
         add(box(f"truss_{i}", x, H / 2, WH - 0.30, 0.26, H, 0.40, (0.55, 0.56, 0.58), metal=0.6, rough=0.4))
         add(box(f"truss_lo_{i}", x, H / 2, WH - 0.62, 0.14, H, 0.16, (0.50, 0.51, 0.53), metal=0.6))
-    for i, x in enumerate([L.TRUSS_PITCH * k + 4.2 for k in range(4)]):
-        for j, y in enumerate([4.0, 8.0, 12.0]):
+    lamp_rows = [H * (j + 1) / 6.0 for j in range(5)]      # 60 m 跨 -> 5 排
+    for i, x in enumerate(trusses[::2]):
+        for j, y in enumerate(lamp_rows):
             add(box(f"lamp_{i}_{j}", x, y, WH - 0.72, 1.30, 0.30, 0.10, (1.0, 0.98, 0.90),
                     rough=0.3))
     cleaner_rails()
@@ -152,18 +160,25 @@ def markings():
             for sy in (-0.90, 0.90):
                 add(box(f"line_{s['name']}_{lane}_{'a' if sy < 0 else 'b'}",
                         (x0 + x1) / 2, lane + sy, 0.012, x1 - x0, 0.10, 0.02, (0.92, 0.80, 0.10), visual_only=True))
-    # 混凝土地坪伸缩缝（每 6 m 一道，真实车间地面就有）
-    for i in range(1, 5):
-        add(box(f"joint_x_{i}", i * 6.0, 8.0, 0.010, 0.06, 15.6, 0.016, (0.52, 0.53, 0.54), visual_only=True))
-    for j in range(1, 3):
-        add(box(f"joint_y_{j}", 13.0, j * 5.5, 0.010, 25.6, 0.06, 0.016, (0.52, 0.53, 0.54), visual_only=True))
-    # 参观/物流通道（浅色环氧地坪带）
-    for j, (y0, w) in enumerate([(7.30, 1.40)]):
-        add(box(f"walkway_{j}", 13.0, y0, 0.008, 25.0, w, 0.014, (0.66, 0.67, 0.66), rough=0.88, visual_only=True))
+    # 混凝土地坪伸缩缝（每 6 m 一道，真实车间地面就有）。
+    # 原为写死的 4 道 / y=8.0 / 长 15.6 —— 只覆盖 26×16 m 的旧厂房。
+    W, H = L.BUILDING["w"], L.BUILDING["h"]
+    for i in range(1, int(W // 6.0)):
+        add(box(f"joint_x_{i}", i * 6.0, H / 2, 0.010, 0.06, H - 0.4, 0.016,
+                (0.52, 0.53, 0.54), visual_only=True))
+    for j in range(1, int(H // 6.0)):
+        add(box(f"joint_y_{j}", W / 2, j * 6.0, 0.010, W - 0.4, 0.06, 0.016,
+                (0.52, 0.53, 0.54), visual_only=True))
+    # 参观通道（浅色环氧地坪带）：沿南墙一条，不压任何取放位与机弄
+    add(box("walkway_0", W / 2, 1.90, 0.008, W - 8.0, 1.40, 0.014,
+            (0.66, 0.67, 0.66), rough=0.88, visual_only=True))
 
-    # 主通道中心虚线
-    for i in range(17):
-        add(box(f"dash_{i}", 1.8 + i * 1.45, 8.0, 0.012, 0.70, 0.09, 0.02, (0.90, 0.90, 0.86), visual_only=True))
+    # 主通道中心虚线：沿待命区与产线带之间的东西向主通道
+    _ly = [y for st in L.STAGES for y in st["lanes"]]
+    aisle_y = (max(_ly) + 2.6 + L.PARK["y"]) / 2.0
+    for i in range(int((W - 4.0) // 3.20)):
+        add(box(f"dash_{i}", 2.0 + i * 3.20, aisle_y, 0.012, 1.60, 0.09, 0.02,
+                (0.90, 0.90, 0.86), visual_only=True))
     # 取放位标记：每个泊位一个环
     for name, pt in L.STORAGE_SLOT_POINTS.items():
         col = (0.22, 0.68, 0.38) if "empty" in name else (0.80, 0.26, 0.28)
@@ -296,16 +311,25 @@ def charger(name, spec):
 
 
 def park_bay():
-    for i, (x, y, _) in enumerate(L.park_poses(8)):
+    # 泊位垫板数量跟布局一致（原来是写死的 8 个，默认车队是 10 台）
+    for i, (x, y, _) in enumerate(L.park_poses(L.PARK["n"])):
         add(box(f"park_pad_{i}", x, y, 0.014, 0.92, 0.72, 0.02, (0.62, 0.63, 0.64),
                 rough=0.9, visual_only=True))
 
 
 def control_room():
-    add(box("office_base", 24.5, 14.1, 0.06, 2.60, 2.60, 0.12, (0.62, 0.63, 0.64)))
-    add(box("office_wall_s", 24.5, 12.85, 1.30, 2.60, 0.12, 2.60, (0.78, 0.80, 0.82), rough=0.6))
-    add(box("office_wall_w", 23.25, 14.1, 1.30, 0.12, 2.60, 2.60, (0.78, 0.80, 0.82), rough=0.6))
-    add(box("office_glass", 24.5, 12.92, 1.70, 1.80, 0.05, 1.00, (0.35, 0.55, 0.68), a=0.55, rough=0.15))
+    """办公/控制室：贴西北角。
+
+    原坐标 (24.5, 14.1) 是 26×16 m 小厂房的东墙边；厂房放大之后那里正是
+    粗纱产线（x=24.5 落在梳棉机里），控制室会直接压在机台上。
+    挪到北侧空白区（y>50 没有任何通行路径）。
+    """
+    W, H = L.BUILDING["w"], L.BUILDING["h"]
+    cx, cy = 9.0, H - 5.6
+    add(box("office_base", cx, cy, 0.06, 5.20, 4.40, 0.12, (0.62, 0.63, 0.64)))
+    add(box("office_wall_s", cx, cy - 2.14, 1.30, 5.20, 0.12, 2.60, (0.78, 0.80, 0.82), rough=0.6))
+    add(box("office_wall_w", cx - 2.54, cy, 1.30, 0.12, 4.40, 2.60, (0.78, 0.80, 0.82), rough=0.6))
+    add(box("office_glass", cx, cy - 2.06, 1.70, 3.60, 0.05, 1.00, (0.35, 0.55, 0.68), a=0.55, rough=0.15))
 
 
 # ------------------------------------------------------------------ 相机
@@ -326,14 +350,35 @@ def camera(name, x, y, z, pitch, yaw, w=1600, h=1000, fov=1.05):
 
 
 def cameras():
+    """四个机位，**全部由布局推出**。
+
+    原来四个机位都是 26×16 m 小厂房的坐标（俯视 z=23、等距 y=-13、机弄 x=2.8
+    在空筒库里面）。厂房放大到 120×60 之后，这些机位要么只拍到一根柱子，
+    要么直接站在货架内部 —— 用户那边"Gazebo 打开什么都看不到"就是这个原因。
+    """
     W, H = L.BUILDING["w"], L.BUILDING["h"]
-    out = [
-        camera("view_top", 13.0, 8.0, 23.0, math.pi / 2, math.pi / 2, 1280, 800, 1.18),
-        camera("view_iso", 36.0, -13.0, 26.0, 0.706, 2.43, 1280, 800, 1.00),
-        camera("view_line", 2.8, 10.5, 1.90, 0.06, 0.08, 1280, 720, 1.30),
-        camera("view_machine", 2.4, 4.6, 2.70, 0.24, 0.64, 1280, 800, 1.10),
+    _ly = [y for st in L.STAGES for y in st["lanes"]]
+    band_mid = (min(_ly) + max(_ly)) / 2.0
+    prod_x0 = L.STAGES[0]["wait_x"]
+    prod_x1 = L.STAGES[-1]["done_x"]
+    prod_cx = (prod_x0 + prod_x1) / 2.0
+    fov_top = 1.18
+    # 俯视机位高度由水平 FOV 反推：要装下 120 m 全宽，z ≈ (W/2)/tan(fov/2)
+    top_z = (W / 2.0) / math.tan(fov_top / 2.0) * 1.30
+    aisle_y = (max(_ly) + L.PARK["y"]) / 2.0          # 待命区与产线带之间的主通道
+    m0 = L.STAGES[0]
+    return [
+        camera("view_top", W / 2, H / 2, top_z, math.pi / 2, math.pi / 2,
+               1280, 800, fov_top),
+        # 等距总览：站在厂房南侧外面看向生产区中心
+        camera("view_iso", prod_cx, -H * 0.32, 40.0, 0.60, math.pi / 2, 1280, 800, 0.95),
+        # 机弄视角：站在梳棉第一条机弄西端，沿机弄向东看
+        camera("view_line", m0["wait_x"] - 4.0,
+               (m0["lanes"][0] + m0["lanes"][1]) / 2.0, 1.60, 0.10, 0.0, 1280, 720, 1.30),
+        # 设备特写：第一台梳棉机东侧斜看
+        camera("view_machine", m0["machine_x"] + 3.4, m0["lanes"][0] - 1.7, 2.40,
+               0.12, 2.42, 1280, 800, 1.10),
     ]
-    return out
 
 
 # ------------------------------------------------------------------ 组装
@@ -353,6 +398,15 @@ def build():
     # 曾经在这里放过实体条筒，结果 AGV 被要求开进一个被占住的点：LiDAR 急停
     # 距离(0.38m)大于到达判定(0.20m)，车永远进不去，反复判"卡死"并放弃任务。
 
+    # 点光源的位置也必须跟着厂房走：原来固定在 (5,5)/(11,11)/(19,6)，
+    # 120 m 厂房里这三盏灯全挤在西端，东半边全黑。
+    _W, _H, _WH = L.BUILDING["w"], L.BUILDING["h"], L.BUILDING["wall_h"]
+    _lamp_xy = [(_W * 0.22, _H * 0.45), (_W * 0.50, _H * 0.72), (_W * 0.78, _H * 0.40)]
+    _lamps = "\n".join(
+        f'''    <light type="point" name="lamp_{i}"><cast_shadows>false</cast_shadows>
+      <pose>{x:.2f} {y:.2f} {_WH - 0.8:.2f} 0 0 0</pose><diffuse>0.82 0.80 0.74 1</diffuse><specular>0.14 0.14 0.14 1</specular>
+      <attenuation><range>{_W / 3.0:.0f}</range><constant>0.6</constant><linear>0.05</linear><quadratic>0.006</quadratic></attenuation>
+    </light>''' for i, (x, y) in enumerate(_lamp_xy))
     head = f'''<?xml version="1.0" ?>
 <sdf version="1.10">
   <world name="textile_mill">
@@ -369,18 +423,7 @@ def build():
       <shadow><cascade_count>3</cascade_count><texture_size>2048</texture_size>
       <cascade_distribution>0.45 0.75 0.95</cascade_distribution></shadow>
     </light>
-    <light type="point" name="lamp_0"><cast_shadows>false</cast_shadows>
-      <pose>5 5 5.2 0 0 0</pose><diffuse>0.82 0.80 0.74 1</diffuse><specular>0.14 0.14 0.14 1</specular>
-      <attenuation><range>18</range><constant>0.6</constant><linear>0.05</linear><quadratic>0.006</quadratic></attenuation>
-    </light>
-    <light type="point" name="lamp_1"><cast_shadows>false</cast_shadows>
-      <pose>11 11 5.2 0 0 0</pose><diffuse>0.82 0.80 0.74 1</diffuse><specular>0.14 0.14 0.14 1</specular>
-      <attenuation><range>18</range><constant>0.6</constant><linear>0.05</linear><quadratic>0.006</quadratic></attenuation>
-    </light>
-    <light type="point" name="lamp_2"><cast_shadows>false</cast_shadows>
-      <pose>19 6 5.2 0 0 0</pose><diffuse>0.82 0.80 0.74 1</diffuse><specular>0.14 0.14 0.14 1</specular>
-      <attenuation><range>18</range><constant>0.6</constant><linear>0.05</linear><quadratic>0.006</quadratic></attenuation>
-    </light>
+{_lamps}
     <scene><ambient>0.42 0.43 0.45 1</ambient><background>0.74 0.78 0.82 1</background><shadows>true</shadows></scene>'''
     out = [head]
     out += PARTS
