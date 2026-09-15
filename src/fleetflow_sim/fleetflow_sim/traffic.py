@@ -42,13 +42,18 @@ from . import layout
 from .planner import Grid, plan
 
 # ---------------------------------------------------------------- 避障参数
-# 车体几何（与 agv.urdf.xacro 保持一致）。碰撞判据必须由几何推出，不能拍一个数：
-# 车心距既不对又难调 —— 0.34 m 会真的撞上（车长 0.56 m），两车外接圆之和
-# 0.712 m 又过于保守（并排本来只要 0.44 m）。
-HULL_LEN = 0.56
-HULL_WID = 0.44
-# 轮廓外扩多少仍算"要撞了"。带余量的矩形一旦相交就是硬停。
-AVOID_MARGIN = 0.05
+# 车是 **50 cm 圆盘差速底盘**（规格与 layout.AGV、urdf/agv.urdf.xacro 一致）。
+# 圆车的好处是占地与朝向无关：净距就是圆心距减两个半径，一个公式到底，
+# 不必再做分离轴测试 —— 早期用有向矩形时，几何代码本身就成了 bug 来源。
+HULL_R = layout.AGV["dia"] / 2.0            # 0.25 m
+HULL_LEN = HULL_WID = 2.0 * HULL_R          # 兼容旧名（外接方形边长 = 直径）
+# 轮廓外扩多少仍算"要撞了"。带余量的圆一旦相交就是硬停。
+AVOID_MARGIN = 0.15
+
+
+def circle_gap(a, b) -> float:
+    """两车**真实轮廓净距**（米）= 圆心距 - 2R。负值表示已经重叠。"""
+    return math.hypot(a[0] - b[0], a[1] - b[1]) - 2.0 * HULL_R
 
 # 间隙阈值（米）：**两车真实轮廓之间的净距**，也就是 closest_gap() 现在返回的量。
 #
@@ -58,13 +63,17 @@ AVOID_MARGIN = 0.05
 # 被判成 0.14 m 开始减速，0.70 m（真实净距 0.14 m）直接硬停。
 # 更糟的是 metrics 报的是真实净距，两个模块对同一对车给出不同的数，无法互证。
 # 现在统一：closest_gap() 用裸轮廓，下面这些阈值就是真实净距。
-COLLISION_CHECK_GAP = 0.35           # 真实净距小于此值开始分级减速
+# 阈值按 **50 cm 圆车**标定（净距 = 圆心距 - 0.50）：
+#   净距 0.60 m  -> 圆心距 1.10 m：开始分级减速，两车仍可正常交会
+#   净距 0.10 m  -> 圆心距 0.60 m：视为贴上，硬停
+#   净距 < 0     -> 圆心距 < 0.50 m：轮廓真重叠，紧急脱离
+COLLISION_CHECK_GAP = 0.60           # 真实净距小于此值开始分级减速
 HARD_SAFETY_GAP = 0.10               # 真实净距小于此值视为已贴上 -> 停
 CRITICAL_SAFETY_GAP = 0.0            # 真实净距为负（轮廓真重叠）-> 紧急脱离
-COLLISION_ESCAPE_BLOCK_DISTANCE = 0.45   # 脱困时"旁边有车"的车心距判据（沿用 ROS1）
+COLLISION_ESCAPE_BLOCK_DISTANCE = 0.70   # 脱困时"旁边有车"的车心距判据
 # 兼容旧名：脱困与让路逻辑里仍按"车心距"表示"旁边很近"
-HARD_SAFETY_DISTANCE = 0.25
-CRITICAL_SAFETY_DISTANCE = 0.15
+HARD_SAFETY_DISTANCE = 0.60
+CRITICAL_SAFETY_DISTANCE = 0.50
 
 # ---------------------------------------------------------------- 死锁参数
 STUCK_DETECTION_WINDOW = 2.5        # 卡住检测时间窗口（秒）
@@ -107,109 +116,32 @@ STALL_REPLAN_COOLDOWN = 3.0         # 卡死重规划节流（秒）
 # ---------------------------------------------------------------- 区域
 # 收敛点：多台车会同向汇聚、需要分散落位的区域。
 # ROS 1 是显式写死的字典，这里按 layout 的真实工位推出来。
+def _region(ys, x):
+    """按一组工位的实际跨度取圆心与半径（留 0.8 m 余量）。"""
+    mid = (min(ys) + max(ys)) / 2.0
+    return dict(center=(x, mid), radius=(max(ys) - min(ys)) / 2.0 + 0.8)
+
+
 REGIONS = {
-    # 半径按**真实工位行的跨度**取：卡位在 y = 3/6/9/12，空筒取放位也是
-    # 这四个高度，所以圆心放中间、半径要盖到 ±4.5；并条/粗纱只有 4.5/10.5
-    # 两行，±3.0 就够。半径取小了会让边上的车落不进区域、分散策略失效；
-    # 取大了会把相邻工序的车算进同一个区域（充电区半径就曾把梳棉待命位吞掉）。
-    "empty_storage":   dict(center=(3.40, 7.50),  radius=4.60),
-    "carding_waiting": dict(center=(5.55, 7.50),  radius=4.60),
-    "drawing_waiting": dict(center=(12.75, 7.50), radius=3.20),
-    "roving_waiting":  dict(center=(17.85, 7.50), radius=3.20),
-    "red_storage":     dict(center=(22.95, 8.00), radius=3.00),
-    "chargers":        dict(center=(5.45, 1.55),  radius=1.00),
+    "empty_storage":   _region(layout.STORAGE_SLOTS["empty"]["ys"],
+                               layout.STORAGE_SLOTS["empty"]["x"]),
+    "carding_waiting": _region(layout.STAGES[0]["lanes"], layout.STAGES[0]["wait_x"]),
+    "drawing_waiting": _region(layout.STAGES[1]["lanes"], layout.STAGES[1]["wait_x"]),
+    "roving_waiting":  _region(layout.STAGES[2]["lanes"], layout.STAGES[2]["wait_x"]),
+    "red_storage":     _region(layout.STORAGE_SLOTS["red"]["ys"],
+                               layout.STORAGE_SLOTS["red"]["x"]),
+    "chargers":        _region([c["y"] for c in layout.CHARGERS.values()],
+                               sum(c["x"] for c in layout.CHARGERS.values())
+                               / max(1, len(layout.CHARGERS))),
 }
 
-# 狭窄通道：南北向的工序待命通道。三台机器/货架在对向车流之间留出的净宽
-# 只有一车多一点，两台车对向挤进去必有一台要走回头路 —— 所以用单向令牌。
-# bbox = (x_min, x_max, y_min, y_max)
-CORRIDOR_ZONES = {
-    "corridor_carding":  dict(bbox=(4.85, 6.25, 1.30, 14.60)),
-    "corridor_drawing":  dict(bbox=(12.05, 13.45, 1.30, 14.60)),
-    "corridor_roving":   dict(bbox=(17.15, 18.55, 1.30, 14.60)),
-}
-
-
-def obb_corners(x, y, yaw, hx, hy):
-    """有向矩形的四个角点。"""
-    c, s = math.cos(yaw), math.sin(yaw)
-    return [(x + c * a - s * b, y + s * a + c * b)
-            for a, b in ((hx, hy), (hx, -hy), (-hx, -hy), (-hx, hy))]
-
-
-def _project(poly, nx, ny):
-    vals = [nx * p[0] + ny * p[1] for p in poly]
-    return min(vals), max(vals)
-
-
-def _sat_axes(A, B):
-    """A、B 两个矩形的全部候选分离轴（每条边的法线，已单位化）。"""
-    axes = []
-    for poly in (A, B):
-        for i in range(4):
-            x1, y1 = poly[i]
-            x2, y2 = poly[(i + 1) % 4]
-            nx, ny = -(y2 - y1), (x2 - x1)
-            n = math.hypot(nx, ny)
-            if n >= 1e-9:
-                axes.append((nx / n, ny / n))
-    return axes
-
-
-def obb_overlap(A, B) -> bool:
-    """分离轴定理：两个有向矩形是否相交（与控制器用的是同一套判据）。"""
-    for nx, ny in _sat_axes(A, B):
-        a0, a1 = _project(A, nx, ny)
-        b0, b1 = _project(B, nx, ny)
-        if a1 < b0 or b1 < a0:
-            return False
-    return True
-
-
-def _point_seg_dist(p, q1, q2) -> float:
-    ex, ey = q2[0] - q1[0], q2[1] - q1[1]
-    L2 = ex * ex + ey * ey
-    if L2 < 1e-18:
-        return math.hypot(p[0] - q1[0], p[1] - q1[1])
-    t = max(0.0, min(1.0, ((p[0] - q1[0]) * ex + (p[1] - q1[1]) * ey) / L2))
-    return math.hypot(p[0] - (q1[0] + t * ex), p[1] - (q1[1] + t * ey))
-
-
-def obb_gap(A, B) -> float:
-    """两个有向矩形的**净距**（米）：分离为正，相交为负（负值即穿透深度）。
-
-    相交时必须返回**真实的穿透深度**，不能只返回一个"负号"。
-    这一点踩过坑：早期实现相交分支用"顶点到对边的最近距离"近似，对两个矩形
-    相互嵌入的情形，最近距离恒为 0 —— 于是 0.06 m 的浅重叠和 0.30 m 的深重叠
-    都返回 -0.0000。后果是 `build_emergency_escape_command` 无法比较"往哪个
-    方向退更能拉开距离"，所有候选看起来一样好，脱困退化成原地转，两台车
-    永远分不开（实测 zone/种子2 t=8.1s，R2 与 R3 就此卡死）。
-    分离轴上的最小重叠量才是正确的穿透深度。
-    """
-    axes = _sat_axes(A, B)
-    if axes:
-        min_overlap = float("inf")
-        separated = False
-        for nx, ny in axes:
-            a0, a1 = _project(A, nx, ny)
-            b0, b1 = _project(B, nx, ny)
-            o = min(a1, b1) - max(a0, b0)
-            if o <= 0.0:
-                separated = True
-                break
-            min_overlap = min(min_overlap, o)
-        if separated:
-            # 分离：最小距离一定取在"某顶点到另一矩形某条边"上
-            best = float("inf")
-            for p in A:
-                for k in range(4):
-                    best = min(best, _point_seg_dist(p, B[k], B[(k + 1) % 4]))
-            for p in B:
-                for k in range(4):
-                    best = min(best, _point_seg_dist(p, A[k], A[(k + 1) % 4]))
-            return best
-        return -min_overlap
-    return float("inf")
+# 单向走廊令牌已**移除**。
+#
+# 它的立论前提是"通道净宽只有一车多一点，对向两车进去必有一台要倒车"。
+# 新布局把工序净宽做到 9.2 m（会车需求 0.80 m，余量 11 倍），
+# 通道里并排通过没有任何问题 —— 令牌只会凭空制造等待。
+# 若要恢复，把 zones 按 layout 的 wait_x/done_x 重新推一遍即可。
+CORRIDOR_ZONES: dict = {}
 
 
 @dataclass
@@ -392,7 +324,9 @@ class TrafficLayer:
     #  走廊单向令牌（ROS1: get_corridor_for_position 等）
     # ================================================================
     def get_corridor_for_position(self, pos):
-        if not pos:
+        # 新布局没有需要单向管制的窄通道（见文件头说明），CORRIDOR_ZONES 为空，
+        # 因此本函数恒返回 None，令牌机制整体处于关闭状态。
+        if not pos or not CORRIDOR_ZONES:
             return None
         x, y = pos
         for cid, info in CORRIDOR_ZONES.items():
@@ -887,10 +821,9 @@ class TrafficLayer:
             "left": [-0.12, 0.12], "right": [-0.12, 0.12],
         }.get(sector, [0.12, -0.12])
 
-        hx, hy = HULL_LEN / 2 + AVOID_MARGIN, HULL_WID / 2 + AVOID_MARGIN
-        me = obb_corners(*self.pos[rid], self.yaw.get(rid, 0.0), hx, hy)
-        other = obb_corners(*self.pos[closest], self.yaw.get(closest, 0.0), hx, hy)
-        gap0 = obb_gap(me, other)
+        # 带余量的圆：与硬安全判据同一套几何（圆车不必再做分离轴）
+        other = self.pos[closest]
+        gap0 = circle_gap(self.pos[rid], other) - 2.0 * AVOID_MARGIN
 
         yaw = self.yaw.get(rid, 0.0)
         dt = 0.5                       # 预测 0.5 s 后的位置
@@ -898,8 +831,7 @@ class TrafficLayer:
         for lin in cands:
             nx = self.pos[rid][0] + lin * math.cos(yaw) * dt
             ny = self.pos[rid][1] + lin * math.sin(yaw) * dt
-            after = obb_corners(nx, ny, yaw, hx, hy)
-            g = obb_gap(after, other)
+            g = circle_gap((nx, ny), other) - 2.0 * AVOID_MARGIN
             if g > best_gap + 1e-6:
                 best_gap, best_lin = g, lin
         if best_lin is not None:
@@ -950,17 +882,15 @@ class TrafficLayer:
         """
         if rid not in self.pos:
             return None, float("inf")
-        hx, hy = HULL_LEN / 2, HULL_WID / 2
-        me = obb_corners(*self.pos[rid], self.yaw.get(rid, 0.0), hx, hy)
+        me = self.pos[rid]
         best, bg = None, float("inf")
         for oid, op in self.pos.items():
             if oid == rid:
                 continue
-            # 粗筛：车心距大于外接圆之和 + 阈值就不可能是最近的
-            if math.hypot(self.pos[rid][0] - op[0], self.pos[rid][1] - op[1]) > 2.0:
+            # 粗筛：超过这个车心距就不可能是最近的
+            if math.hypot(me[0] - op[0], me[1] - op[1]) > 2.0:
                 continue
-            other = obb_corners(op[0], op[1], self.yaw.get(oid, 0.0), hx, hy)
-            g = obb_gap(me, other)
+            g = circle_gap(me, op)
             if g < bg:
                 best, bg = oid, g
         return best, bg

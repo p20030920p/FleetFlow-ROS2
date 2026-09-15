@@ -8,14 +8,16 @@
   <xacro:property name="robot_id"   value="$(arg robot_id)"/>
   <xacro:property name="body_color" value="$(arg body_color)"/>
 
-  <!-- 尺寸: 一台能放进 16x10m 厂房、又能在截图里看清的搬运车 -->
-  <xacro:property name="body_len" value="0.56"/>
-  <xacro:property name="body_w"   value="0.44"/>
-  <xacro:property name="body_h"   value="0.14"/>
-  <xacro:property name="wheel_r"  value="0.075"/>
-  <xacro:property name="wheel_w"  value="0.045"/>
-  <xacro:property name="sep"      value="0.42"/>
-  <xacro:property name="deck_z"   value="${body_h/2 + 0.02}"/>
+  <!-- 尺寸：**直径 0.50 m 的圆盘差速底盘**（layout.AGV 是同一份规格）。
+       工业 AGV 多用圆车：任意朝向占地相同，避让判据不必分朝向。
+       参数取公开规格的量级（松灵/宇树这类底盘：直径 0.4~0.6 m、
+       高 0.25~0.35 m、轮距约 0.36 m、带 360° 雷达）。 -->
+  <xacro:property name="body_r"   value="0.25"/>   <!-- 半径 = 直径 0.50 -->
+  <xacro:property name="body_h"   value="0.24"/>
+  <xacro:property name="wheel_r"  value="0.06"/>
+  <xacro:property name="wheel_w"  value="0.04"/>
+  <xacro:property name="sep"      value="0.36"/>   <!-- 轮距（左右轮中心距） -->
+  <xacro:property name="deck_z"   value="${body_h/2 + 0.012}"/>
 
   <link name="base_footprint"/>
 
@@ -27,23 +29,29 @@
 
   <link name="base_link">
     <visual name="body">
-      <geometry><box size="${body_len} ${body_w} ${body_h}"/></geometry>
+      <geometry><cylinder radius="${body_r}" length="${body_h}"/></geometry>
       <material name="body"><color rgba="${body_color} 1"/></material>
     </visual>
-    <!-- 顶面浅色甲板，俯视时能一眼分清车体和朝向 -->
+    <!-- 顶面浅色甲板（圆），俯视时能一眼分清车体 -->
     <visual name="deck">
-      <origin xyz="-0.06 0 ${deck_z}" rpy="0 0 0"/>
-      <geometry><box size="0.30 0.30 0.02"/></geometry>
+      <origin xyz="0 0 ${deck_z}" rpy="0 0 0"/>
+      <geometry><cylinder radius="${body_r*0.78}" length="0.012"/></geometry>
       <material name="deck"><color rgba="0.96 0.97 0.98 1"/></material>
     </visual>
-    <!-- 车头标记，用于判断朝向 -->
+    <!-- 车头指向标记：俯视时的朝向全靠它 -->
     <visual name="nose">
-      <origin xyz="${body_len/2 - 0.03} 0 0.01" rpy="0 0 0"/>
-      <geometry><box size="0.06 0.20 0.04"/></geometry>
+      <origin xyz="${body_r*0.72} 0 ${body_h/2 - 0.005}" rpy="0 0 0"/>
+      <geometry><box size="0.10 0.06 0.02"/></geometry>
       <material name="nose"><color rgba="1.0 0.45 0.10 1"/></material>
     </visual>
+    <!-- 360° 雷达（顶部圆柱），与 LiDAR 安装高度一致 -->
+    <visual name="lidar">
+      <origin xyz="${body_r*0.55} 0 ${body_h/2 + 0.03}" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.05"/></geometry>
+      <material name="lidar"><color rgba="0.12 0.12 0.14 1"/></material>
+    </visual>
     <collision name="body_c">
-      <geometry><box size="${body_len} ${body_w} ${body_h}"/></geometry>
+      <geometry><cylinder radius="${body_r}" length="${body_h}"/></geometry>
     </collision>
     <inertial>
       <mass value="12.0"/>
@@ -94,7 +102,7 @@
   <joint name="caster_joint" type="fixed">
     <parent link="base_link"/>
     <child link="caster"/>
-    <origin xyz="${-body_len/2 + 0.06} 0 ${-body_h/2 - 0.03}" rpy="0 0 0"/>
+    <origin xyz="${-body_r*0.72} 0 ${-body_h/2 - 0.03}" rpy="0 0 0"/>
   </joint>
 
   <link name="lidar_link">
@@ -105,7 +113,7 @@
   <joint name="lidar_joint" type="fixed">
     <parent link="base_link"/>
     <child link="lidar_link"/>
-    <origin xyz="${body_len/2 - 0.10} 0 ${body_h/2 + 0.045}" rpy="0 0 0"/>
+    <origin xyz="0 0 ${body_h/2 + 0.045}" rpy="0 0 0"/>
   </joint>
 
   <!-- ============ Gazebo Sim 系统 ============ -->
@@ -139,13 +147,14 @@
       <lidar>
         <scan>
           <horizontal>
-            <samples>180</samples>
+            <samples>360</samples>
             <resolution>1</resolution>
             <min_angle>-3.14159</min_angle>
             <max_angle>3.14159</max_angle>
           </horizontal>
         </scan>
         <range><min>0.12</min><max>12.0</max><resolution>0.01</resolution></range>
+        <!-- 量程 12 m 与 layout.AGV['lidar_range'] 一致：主通道 9.2 m 内可全见 -->
       </lidar>
     </sensor>
   </gazebo>

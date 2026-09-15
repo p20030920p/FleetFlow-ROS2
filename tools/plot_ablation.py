@@ -53,26 +53,46 @@ def fnum(v):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("summary")
-    ap.add_argument("out")
+    ap.add_argument("summary", nargs="?")
+    ap.add_argument("out_pos", nargs="?")
+    ap.add_argument("--out", default=None, help="输出 PNG（配合 --group）")
+    ap.add_argument("--group", action="append", default=[],
+                    metavar="LABEL=SUMMARY.CSV",
+                    help="可变组数：每给一个就多画一排（按车队规模分组时用）")
     args = ap.parse_args()
+    if not args.group and not (args.summary and args.out):
+        ap.error("要么给 --group，要么给 summary out 两个位置参数")
 
-    agg = defaultdict(lambda: defaultdict(list))
-    for r in load(args.summary):
-        p = r.get("policy")
-        if p not in LABEL:
-            continue
-        done = fnum(r.get("completed")) or 0.0
-        dist = fnum(r.get("distance_total_m")) or 0.0
-        for k in ("throughput_per_min", "near_miss_events", "latency_mean_s"):
-            v = fnum(r.get(k))
-            if v is not None:
-                agg[p][k].append(v)
-        if done:
-            agg[p]["distance_per_task"].append(dist / done)
+    def aggregate(path):
+        agg = defaultdict(lambda: defaultdict(list))
+        for r in load(path):
+            q = r.get("policy")
+            if q not in LABEL:
+                continue
+            done = fnum(r.get("completed")) or 0.0
+            dist = fnum(r.get("distance_total_m")) or 0.0
+            for k in ("throughput_per_min", "near_miss_events", "latency_mean_s"):
+                v = fnum(r.get(k))
+                if v is not None:
+                    agg[q][k].append(v)
+            if done:
+                agg[q]["distance_per_task"].append(dist / done)
+        return {q: {k: (statistics.fmean(v),
+                        statistics.pstdev(v) if len(v) > 1 else 0.0)
+                    for k, v in m.items()} for q, m in agg.items()}
 
-    data = {p: {k: (statistics.fmean(v), statistics.pstdev(v) if len(v) > 1 else 0.0)
-                for k, v in m.items()} for p, m in agg.items()}
+    if args.group:
+        groups = []
+        for item in args.group:
+            if "=" not in item:
+                print(f"--group 需要 LABEL=FILE，收到 {item!r}", file=sys.stderr)
+                return 2
+            lab, path = item.split("=", 1)
+            groups.append((lab, aggregate(path)))
+        data = groups[0][1]
+    else:
+        groups = [(None, aggregate(args.summary))]
+        data = groups[0][1]
     pols = [p for p in ORDER if p in data]
     full_tp = data.get("ca_ssi", {}).get("throughput_per_min", (0.0, 0.0))[0]
 
@@ -83,6 +103,24 @@ def main() -> int:
         "axes.labelcolor": INK, "text.color": INK, "ytick.color": INK,
         "xtick.color": MUTED,
     })
+    if len(groups) > 1:
+        # 多组：每组单独出一张，文件名加后缀（README 里可并排引用）
+        import re as _re
+        base = args.out or args.out_pos or "ablation.png"
+        rc = 0
+        for lab, gdata in groups:
+            slug = _re.sub(r"[^0-9A-Za-z]+", "", str(lab)) or "x"
+            one = _re.sub(r"\.png$", f"_{slug}.png", base)
+            rc |= _render_one(gdata, one)
+        print(f"wrote {len(groups)} panels under {base}")
+        return rc
+
+    return _render_one(data, args.out or args.out_pos)
+
+
+def _render_one(data, out):
+    pols = [p for p in ORDER if p in data]
+    full_tp = data.get("ca_ssi", {}).get("throughput_per_min", (0.0, 0.0))[0]
     fig, (ax, bx) = plt.subplots(1, 2, figsize=(15.0, 5.2), dpi=100,
                                  gridspec_kw=dict(width_ratios=[1.25, 1.0], wspace=0.28))
     fig.patch.set_facecolor(BG)
@@ -115,7 +153,7 @@ def main() -> int:
                     color=RED if d < 0 else GREEN)
     ax.set_title("留一法消融：去掉一项，吞吐掉多少", fontsize=12.6, fontweight="bold",
                  color=INK, pad=30, loc="left")
-    ax.text(0.0, 1.035, "LEAVE-ONE-OUT ABLATION · 8 AGVs · 3 seeds · 80 units in circulation",
+    ax.text(0.0, 1.035, "LEAVE-ONE-OUT ABLATION · 80 units in circulation",
             transform=ax.transAxes, fontsize=8.4, color=MUTED, va="bottom")
 
     # 右：单任务里程
@@ -143,8 +181,8 @@ def main() -> int:
                  pad=30, loc="left")
 
     fig.subplots_adjust(left=0.105, right=0.985, top=0.80, bottom=0.10)
-    fig.savefig(args.out, facecolor=BG)
-    print(f"wrote {args.out}")
+    fig.savefig(out, facecolor=BG)
+    print(f"wrote {out}")
     return 0
 
 

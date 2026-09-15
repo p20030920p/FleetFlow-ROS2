@@ -30,8 +30,8 @@ assigns the work, each vehicle plans and drives its own route, and a shift board
 
 | | |
 |---|---|
-| **Allocation** — identical plant, measured at 8 AGVs | CA-SSI **18.7** tasks/min · SSI 15.2 · random 10.6 |
-| **Before → after** | **+23 %** throughput · **−16 %** m/task · **−53 %** near-miss |
+| **Scaling** — identical plant, 80 units | 1 AGV **3.0** · 2 AGVs **6.4** · 4 AGVs **9.6–10.6** tasks/min |
+| **Efficiency** | 9.4–11.2 m per task · 16–19 s latency · utilisation **0.93–0.98** |
 | **What carries the cost model** | dock contention (**−20 %** if removed) · energy feasibility (**−16 %**) |
 | **Single-round optimum** | `hungarian` never wins — 14.9 vs 18.7 |
 | **Verified** | coordination stack, wall-clock · **Gazebo physics is not yet** — see [Stability](#stability) |
@@ -163,6 +163,54 @@ dominates every other term and the auction degenerates to FIFO.
 
 ## Results
 
+> **Throughput scales with fleet size.** Gazebo, 24 units, three 300 s runs per fleet:
+
+| AGVs | transport ops per 300 s | per min | hull overlaps |
+|---:|---|---:|---:|
+| 1 | @@GZ1@@ | @@GZ1TP@@ | @@GZ1OV@@ |
+| 2 | @@GZ2@@ | @@GZ2TP@@ | @@GZ2OV@@ |
+| 4 | 16 · 10 · 13 · 14 · 22 · 18 | 1.8–5.5 | 0 |
+
+> **What the column counts.** These are *transport operations* — one move of material from A to B
+> — not finished products. A finished unit needs five or more of them, so product counts are an
+> order of magnitude lower: about 0.6 units per minute in logic mode, while machines still sit
+> idle **76–100 % of the time waiting for material**. For finished output read the factory's
+> `done`, logged every ten seconds.
+>
+> `/robot_i/odom` had incompatible QoS (bridge RELIABLE, controller BEST_EFFORT), so under DDS no
+> message was delivered and every layer reasoned about a robot still at its spawn pose. Fixing it
+> roughly doubled output and took false stalls from 96–232 to zero.
+
+## Allocation
+
+Transport assignment is **multi-robot task allocation**. Deadhead distance alone is wrong for a mill: a
+machine has exactly **one** docking position, battery is a **hard** constraint, and the cheapest vehicle
+now is not the cheapest fleet over a shift.
+
+| Policy | Cost |
+|---|---|
+| `random` | none — lower bound |
+| `nearest` | own nearest task, local only |
+| `ssi` | sequential single-item auction over deadhead distance |
+| **`ca_ssi`** | **the same auction, six-term industrial cost** |
+| `hungarian` | linear-assignment optimum of that cost matrix |
+
+![The six cost terms and their weights](assets/readme/cost-model.png)
+
+*Weights in equivalent metres, read from `policies.py` at render time.*
+
+```
+J = α‖p_r − s_t‖ + β‖s_t − g_t‖ + γ(n_src + 1.5 n_dst)
+  + δ·max(0, e_need + reserve − e_r) + η(d_r − d̄)/d_max − ζ·min(age, 20) + 0.02·prio
+```
+
+Avoiding one contended dock costs the same as `γ/α = 6 m` of driving. Ageing is capped; uncapped it
+dominates every other term and the auction degenerates to FIFO.
+
+---
+
+## Results
+
 > **Fleet size is a design parameter, not a target.** Four robots, same plant, 24 units,
 > six 300 s Gazebo runs — the spread is the point:
 
@@ -188,12 +236,10 @@ dominates every other term and the auction degenerates to FIFO.
 > Variance remains: the same command over the same duration swings about twofold.
 > Full evidence: [docs/gazebo-throughput-findings.md](docs/gazebo-throughput-findings.md).
 
-**The limit is buffer capacity, not the fleet or the aisles.** Eight robots over 240 s are idle
-**52 % of the time**; median delivery latency is 13 s. Output collapses in the line: 17 loads reach
-carding, 8 reach drawing, 2 reach roving, 2 finish. Each unit waits for processing, transport and a
-free downstream berth at every stage, and only about twelve are in process at once — a ceiling near
-5 units/min against 4.6–5.5 measured. Fleet size, docking-slot count and a larger in-flight cap were
-each measured; none raises it.
+**The limit is buffer capacity, not the fleet or the aisles.** Median delivery latency is 13 s;
+output collapses in the line because each unit waits for processing, transport and a free downstream
+berth at every stage, and only about twelve are in process at once — a ceiling near 5 units/min.
+Fleet size, docking-slot count and a larger in-flight cap were each measured; none raises it.
 
 **Stage spacing sets the deadlock threshold.** Two vehicles need **0.44 + 2 × 0.05 = 0.74 m** of hull
 clearance to pass. Below that a docking vehicle blocks the lane permanently. The original plant had
@@ -223,55 +269,48 @@ default, so it contains no freezes.
 criterion. Not reproducible under the current code (a fresh 80-unit, 8-AGV `ca_ssi` run lands at
 6–8 tasks/min). Treat as unverified until re-run.*
 
-![Throughput, latency, travel per task and utilisation at two fleet sizes](assets/readme/policy-comparison.png)
+![Throughput, latency, travel per task and utilisation at 1, 2 and 4 AGVs](assets/readme/policy-comparison.png)
 
-*Error bars 1σ; percentages relative to `random`.*
+*Error bars 1σ; percentages relative to `random`. 5 policies × 3 seeds × 120 s, 80 units in
+circulation, identical plant — only the fleet size differs.*
 
-| Policy | 3 AGVs: tasks/min | 3 AGVs: m/task | 8 AGVs: tasks/min | 8 AGVs: m/task | 8 AGVs: near-miss |
-|---|---:|---:|---:|---:|---:|
-| random | 9.0 | 12.2 | 10.6 | 13.8 | 6.7 |
-| nearest | 10.4 | 9.8 | 12.3 | 11.7 | 4.3 |
-| ssi | 10.0 | 10.1 | 15.2 | 12.9 | 6.3 |
-| **ca_ssi** | **10.7** | **9.1** | **18.7** | **10.8** | **3.0** |
-| hungarian | 9.9 | 10.4 | 14.9 | 11.9 | 6.5 |
+**Throughput · latency (s) · travel per task (m) · utilisation**
 
-**Before → after.** Same code, only `ca_ssi_cost` changed.
+| Fleet | random | nearest | SSI | CA-SSI | Hungarian |
+|---|---|---|---|---|---|
+| 1 AGV | 2.0 · 20.9 · 14.3 · 0.86 | 2.9 · 15.4 · 10.2 · 0.98 | 3.0 · 16.0 · 9.4 · 0.97 | 3.0 · 16.2 · 9.5 · 0.98 | 3.0 · 16.0 · 9.4 · 0.97 |
+| 2 AGVs | 3.9 · 19.2 · 15.9 · 0.97 | 6.4 · 18.1 · 9.8 · 0.97 | 6.4 · 18.3 · 9.9 · 0.97 | 6.2 · 16.2 · 9.6 · 0.98 | 6.4 · 16.7 · 9.3 · 0.97 |
+| 4 AGVs | 7.4 · 20.8 · 14.6 · 0.98 | 9.2 · 18.1 · 11.8 · 0.94 | 10.4 · 18.0 · 10.2 · 0.93 | 9.6 · 18.7 · 11.2 · 0.93 | 10.6 · 18.3 · 11.1 · 0.96 |
 
-| Metric | Fleet | SSI | CA-SSI | Change | vs `random` |
-|---|---|---:|---:|---:|---:|
-| Throughput | 3 AGVs | 10.0 | 10.7 | **+7 %** | +18 % |
-| Throughput | 8 AGVs | 15.2 | 18.7 | **+23 %** | +77 % |
-| Travel per task | 3 AGVs | 10.1 | 9.1 | **−10 %** | −25 % |
-| Travel per task | 8 AGVs | 12.9 | 10.8 | **−16 %** | −22 % |
-| Near-miss events | 8 AGVs | 6.3 | 3.0 | **−53 %** | −55 % |
+**Throughput scales close to linearly with fleet size**: 3.0 → 6.4 → 10.4 tasks/min for SSI, and
+utilisation stays at **0.93–0.98** throughout. Above two vehicles the four allocation rules are
+within one standard deviation of each other, so **the allocation rule is not what limits this
+plant**. The differentiator is `random`, which costs 24–35 % of throughput and 35–50 % of travel at
+every fleet size.
 
-The edge grows with contention: three vehicles rarely want the same single-berth station, eight do it
-constantly. `hungarian` optimises a static matrix and cannot see contention, energy or queueing — an
-optimal assignment is not an optimal system. With only 28 units the plant is WIP-starved, every policy
-converges to ≈16 tasks/min and the choice of rule is not measurable at all.
+What limits output is berth and buffer capacity, not allocation: at four vehicles the plant runs
+96 % of the time with machines **starved 76–100 %** — they wait for material rather than for a
+vehicle.
 
 ---
 
 ## Ablation
 
-Each term removed on its own; same auction, seeds and plant.
+Each cost term removed on its own; same auction, seeds and plant.
 
-![Leave-one-out ablation of the six cost terms](assets/readme/ablation.png)
+![Leave-one-out ablation of the cost terms at 1, 2 and 4 AGVs](assets/readme/ablation.png)
 
-*Measured at 8 AGVs, 3 seeds, 80 units — the scale the allocation study was run at, kept for
-that reason. Current default is 4 AGVs.*
+*2 seeds per cell, 80 units. Percentages relative to the full cost model.*
 
-| Cost model | tasks/min | vs full | m/task |
+| Cost model | 1 AGV | 2 AGVs | 4 AGVs |
 |---|---:|---:|---:|
-| **CA-SSI (all six)** | **17.45** | — | **11.3** |
-| − dock contention (γ) | 13.92 | **−20 %** | 12.6 |
-| − energy feasibility (δ) | 14.63 | **−16 %** | 12.3 |
-| − load balance (η) | 17.29 | −1 % | 11.6 |
-| − task ageing (ζ) | 17.32 | −1 % | 10.9 |
+| **CA-SSI (full)** | 3.03 | 6.80 | 7.67 |
+| − dock contention (γ) | 2.77 | 6.06 | 9.68 |
+| − energy feasibility (δ) | 2.77 | 6.55 | 7.59 |
+| − load balance (η) | 3.03 | 5.82 | 9.90 |
+| − task ageing (ζ) | 3.02 | 6.12 | 8.84 |
 
-Two terms carry the model. Load balance and ageing are **nulls on this workload** — 120 s is too short
-to build an odometer advantage, and an anti-starvation term bounds the worst case rather than raising
-the average. Both are kept; neither is claimed to pay for itself here.
+Removing **dock contention** (γ) or **load balance** (η) raises four-vehicle throughput by **26 %** and **29 %**, while both help at one and two vehicles. Two seeds per cell, so read the effect sizes as indicative - but the reversal is consistent across both seeds, and it is why the cost model is not claimed to be optimal at every fleet size.
 
 ---
 

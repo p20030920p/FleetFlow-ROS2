@@ -1,0 +1,2 @@
+run_label,policy,num_robots,wall_s,makespan_s,completed,throughput_per_min,latency_mean_s,latency_p50_s,latency_p95_s,utilisation_mean,distance_total_m,traffic_rejected,traffic_expired,min_robot_distance_m,near_miss_events,charging_events,reassignments,min_robot_gap_m,overlap_events,dup_target_ticks,dup_target_events
+ca_noage_s2,ca_noage,4,118.2,94.3,15,7.613,19.768,13.004,34.055,0.915,180.88,0,0,0.61,0,0,1,0.055,0,0,0

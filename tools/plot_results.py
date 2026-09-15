@@ -85,7 +85,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("saturated", nargs="?", help="小车队工况 summary.csv")
     ap.add_argument("slack", nargs="?", help="大车队工况 summary.csv")
-    ap.add_argument("out", nargs="?", help="输出 PNG")
+    ap.add_argument("out_pos", nargs="?", help="输出 PNG（旧的位置参数写法）")
+    ap.add_argument("--out", default=None,
+                    help="输出 PNG（配合 --group 使用；位置参数写法仍可用）")
     ap.add_argument("--group", action="append", default=[],
                     metavar="LABEL=SUMMARY.CSV",
                     help="可变组数：可重复给出，行按给出顺序排列。"
@@ -181,8 +183,9 @@ def main() -> int:
              "· 两行使用完全相同的工厂与物料模型（80 件物料），只有车队规模不同",
              fontsize=9.4, color=MUTED, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.918), h_pad=5.6)
-    fig.savefig(args.out, facecolor=BG)
-    print(f"wrote {args.out}")
+    out = args.out or args.out_pos
+    fig.savefig(out, facecolor=BG)
+    print(f"wrote {out}")
     return 0
 
 

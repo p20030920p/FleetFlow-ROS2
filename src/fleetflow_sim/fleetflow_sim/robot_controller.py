@@ -597,15 +597,23 @@ class RobotController(Node):
         self._meas_speed = 0.65 * prev + 0.35 * inst
 
     def _true_speed_now(self) -> float:
-        """当前真实速度：优先里程计 twist，退化到位姿差分，再退化到指令。
+        """当前行进速度，取两种来源的**较大者**。
 
-        twist 在有 odom 的模式（Gazebo）下就是真值；纯逻辑模式没有 odom，
-        用位姿差分足够（内部运动学积分理想，不存在成簇到达问题）。
+        1. 里程计 twist（有 odom 时）：Gazebo 自己算的车身速度，是真值。
+        2. 位姿差分（`_meas_speed`）：纯逻辑模式下没有 odom，只能差分。
+
+        为什么必须取较大者而不是二选一 —— 实测踩过：纯逻辑模式下位姿是
+        **成簇**更新的（一帧推进一段，随后若干个控制周期位姿不变），
+        位姿差分于是在多数周期里读出 0。协调层拿这个 0 判定"车停着"，
+        8 s 后触发 stalled_replan，把正在正常行驶的车当卡死反复打断。
+        指令速度在车真的在走时非零，正好补上这个盲区；车真停下时指令也是 0，
+        所以取最大值不会把"停着"误报成"在走"。
         """
         v_odom = getattr(self, "_odom_speed", None)
         if v_odom is not None:
             return float(v_odom)
-        return float(getattr(self, "_meas_speed", 0.0))
+        return max(float(getattr(self, "_meas_speed", 0.0)),
+                   abs(float(getattr(self, "_v_cmd", 0.0))))
 
     def loop(self):
         now = time.time()

@@ -1,0 +1,11 @@
+run_label,policy,num_robots,wall_s,makespan_s,completed,throughput_per_min,latency_mean_s,latency_p50_s,latency_p95_s,utilisation_mean,distance_total_m,traffic_rejected,traffic_expired,min_robot_distance_m,near_miss_events,charging_events,reassignments,min_robot_gap_m,overlap_events,dup_target_ticks,dup_target_events
+ca_ssi_s1,ca_ssi,1,118.4,104.2,6,3.041,15.974,15.14,15.839,0.977,56.34,0,0,,0,0,7,,0,0,0
+ca_ssi_s2,ca_ssi,1,119.1,104.4,6,3.022,16.015,15.481,16.131,0.97,56.11,0,0,,0,0,7,,0,0,0
+ca_nocong_s1,ca_nocong,1,119.3,104.203,6,3.017,16.023,15.373,16.121,0.971,56.68,0,0,,0,0,7,,0,0,0
+ca_nocong_s2,ca_nocong,1,119.3,81.099,5,2.516,14.464,15.163,15.163,0.977,57.51,0,0,,0,0,7,,0,0,0
+ca_noener_s1,ca_noener,1,119.2,104.2,6,3.02,16.201,15.601,16.451,0.968,56.39,0,0,,0,0,7,,0,0,0
+ca_noener_s2,ca_noener,1,119.2,81.299,5,2.517,14.558,14.858,15.358,0.983,57.96,0,0,,0,0,7,,0,0,0
+ca_nobal_s1,ca_nobal,1,118.9,104.5,6,3.029,16.237,15.753,16.351,0.974,56.2,0,0,,0,0,7,,0,0,0
+ca_nobal_s2,ca_nobal,1,119.1,104.697,6,3.024,16.32,15.821,16.669,0.966,55.61,0,0,,0,0,7,,0,0,0
+ca_noage_s1,ca_noage,1,119.2,101.099,6,3.02,15.909,14.941,16.192,0.953,56.54,0,0,,0,0,6,,0,0,0
+ca_noage_s2,ca_noage,1,119.3,103.5,6,3.017,16.049,15.296,15.792,0.967,56.98,0,0,,0,0,7,,0,0,0

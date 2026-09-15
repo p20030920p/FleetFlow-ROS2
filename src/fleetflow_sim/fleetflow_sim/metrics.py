@@ -29,7 +29,7 @@ from std_msgs.msg import Int32, String
 from fleetflow_interfaces.msg import RobotStatus, TransportTask
 
 from .qos import state_qos
-from .traffic import HULL_LEN, HULL_WID, obb_corners, obb_gap
+from .traffic import circle_gap
 
 TASK_FIELDS = ["task_id", "material", "source", "dest", "robot_id",
                "created_s", "assigned_s", "delivered_s", "latency_s", "travel_cost"]
@@ -183,9 +183,7 @@ class MetricsRecorder(Node):
                 d = math.hypot(a.x - b.x, a.y - b.y)
                 if d < self.min_pair_dist:
                     self.min_pair_dist = d
-                A = obb_corners(a.x, a.y, a.yaw, HULL_LEN / 2, HULL_WID / 2)
-                B = obb_corners(b.x, b.y, b.yaw, HULL_LEN / 2, HULL_WID / 2)
-                gap = obb_gap(A, B)
+                gap = circle_gap((a.x, a.y), (b.x, b.y))
                 if gap < self.min_gap:
                     self.min_gap = gap
                 key = (ids[i], ids[j])

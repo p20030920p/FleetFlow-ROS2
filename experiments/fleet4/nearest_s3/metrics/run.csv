@@ -1,0 +1,2 @@
+run_label,policy,num_robots,wall_s,makespan_s,completed,throughput_per_min,latency_mean_s,latency_p50_s,latency_p95_s,utilisation_mean,distance_total_m,traffic_rejected,traffic_expired,min_robot_distance_m,near_miss_events,charging_events,reassignments,min_robot_gap_m,overlap_events,dup_target_ticks,dup_target_events
+nearest_s3,nearest,4,119.4,117.02,21,10.553,18.393,16.349,29.547,0.911,229.15,0,0,0.689,0,0,0,0.056,0,0,0

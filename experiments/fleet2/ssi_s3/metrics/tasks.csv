@@ -1,0 +1,13 @@
+task_id,material,source,dest,robot_id,created_s,assigned_s,delivered_s,latency_s,travel_cost
+1,empty,storage_empty_slot_0,carding_waiting_0,0,1.999634027481079,2.025,25.424,23.424,
+2,empty,storage_empty_slot_1,carding_waiting_1,1,1.9998526573181152,2.01,27.41,25.41,
+5,empty,storage_empty_slot_0,carding_waiting_0,0,25.499321222305298,25.625,38.425,12.925,
+6,empty,storage_empty_slot_1,carding_waiting_1,1,27.499053955078125,27.61,40.41,12.911,
+9,empty,storage_empty_slot_0,carding_waiting_0,0,38.49978542327881,38.625,51.525,13.025,
+10,empty,storage_empty_slot_1,carding_waiting_1,1,40.5000433921814,40.512,53.21,12.71,
+11,empty,storage_empty_slot_2,carding_waiting_2,0,50.00279664993286,51.625,69.924,19.921,
+12,empty,storage_empty_slot_3,carding_waiting_3,1,52.002028465270996,53.41,71.609,19.607,
+13,empty,storage_empty_slot_0,carding_waiting_2,0,70.00198650360107,70.024,92.024,22.022,
+14,empty,storage_empty_slot_1,carding_waiting_3,1,71.69897985458374,71.71,93.509,21.81,
+17,empty,storage_empty_slot_0,carding_waiting_2,0,92.09882521629333,92.225,114.924,22.825,
+18,empty,storage_empty_slot_1,carding_waiting_3,1,93.59900379180908,93.609,116.209,22.61,
