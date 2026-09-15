@@ -651,6 +651,13 @@ class Dashboard(Node):
         # 工序净宽改成 2.0 m 之后红料库东移到 x≈28，写死的 26.25 会把
         # 货架画到地图框外、压住右侧面板。这里改成推导 + 左右各留一点边。
         wx0, wx1, wy0, wy1 = layout.world_bounds()
+        # 产线带（所有工序的 lane）的 y 范围。**平面图的纵向排版全部由它推出**：
+        # 工序区底色、区名、流向箭头、取放位都在这个带内，
+        # 写死（原来用 1.55/11.90/13.10）在厂区从 16 m 变成 60 m 之后
+        # 会把整张图挤到最南边一小条 —— 用户看到的"示例图不对"就是这个。
+        _ly = [y for st in layout.STAGES for y in st["lanes"]]
+        band0, band1 = min(_ly) - 2.6, max(_ly) + 2.6
+        band_mid = (band0 + band1) / 2.0
         x_min, x_max = wx0 - 0.25, wx1 + 0.25
         y_mid, x_span = (wy0 + wy1) / 2, (x_max - x_min)
         y_span = x_span * box_h_px / box_w_px
@@ -668,15 +675,18 @@ class Dashboard(Node):
         for gx in [layout.COLUMN_PITCH * k for k in range(1, 5)
                    if layout.COLUMN_PITCH * k < wx1]:
             ax.plot([gx, gx], [wy0, wy1], color="#ddd7c8", lw=0.7, ls=(0, (6, 4)), zorder=1.2)
-        ax.plot([wx0, wx1], [8, 8], color="#ddd7c8", lw=0.7, ls=(0, (6, 4)), zorder=1.2)
+        ax.plot([wx0, wx1], [band_mid, band_mid], color="#ddd7c8", lw=0.7,
+                ls=(0, (6, 4)), zorder=1.2)
 
-        # 工序流向（空筒库 → 成品库，走 y=7.5 的通道）
-        ax.annotate("", xy=(layout.STORAGE_SLOTS["red"]["x"] + 0.2, 7.5), xytext=(3.0, 7.5),
+        # 工序流向（空筒库 → 成品库，走产线带中线）
+        ax.annotate("", xy=(layout.STORAGE_SLOTS["red"]["x"] + 0.2, band_mid),
+                    xytext=(layout.STORAGE_SLOTS["empty"]["x"] - 1.0, band_mid),
                     arrowprops=dict(arrowstyle="-|>", color="#b3ada0", lw=1.1,
                                     linestyle=(0, (7, 4))), zorder=2)
-        ax.text(3.10, 7.62, "投料", color=FAINT, fontsize=5.0, ha="left", va="bottom", zorder=3)
-        ax.text(layout.STORAGE_SLOTS["red"]["x"] + 0.1, 7.62, "入库", color=FAINT,
-                fontsize=5.0, ha="right", va="bottom", zorder=3)
+        ax.text(layout.STORAGE_SLOTS["empty"]["x"] - 0.9, band_mid + 0.25, "投料",
+                color=FAINT, fontsize=5.4, ha="left", va="bottom", zorder=3)
+        ax.text(layout.STORAGE_SLOTS["red"]["x"] + 0.1, band_mid + 0.25, "入库",
+                color=FAINT, fontsize=5.4, ha="right", va="bottom", zorder=3)
 
         # 三个工序区
         # 工序区边界由该段自己的等料位/完工位推出，写死会在改净宽后错位
@@ -687,12 +697,13 @@ class Dashboard(Node):
             edges.append((left, right))
         for st, (zx0, zx1) in zip(layout.STAGES, edges):
             rgb = _stage_rgb(st["name"])
-            ax.add_patch(Rectangle((zx0, 1.55), zx1 - zx0, 11.90, facecolor=_tint(rgb, 0.925),
+            ax.add_patch(Rectangle((zx0, band0), zx1 - zx0, band1 - band0,
+                                   facecolor=_tint(rgb, 0.925),
                                    edgecolor=_hex(rgb), lw=0.6, ls=(0, (5, 3)), zorder=1.4))
-            ax.text(zx0 + 0.25, 13.10, f"{st['cn']}区", color=_hex(rgb), fontsize=6.2,
+            ax.text(zx0 + 0.35, band1 - 1.0, f"{st['cn']}区", color=_hex(rgb), fontsize=7.0,
                     fontweight="bold", va="center", zorder=3)
-            ax.text(zx0 + 1.45, 13.10, f"{STAGE_EN[st['name']]} × {len(st['lanes'])}",
-                    color=FAINT, fontsize=4.6, va="center", zorder=3)
+            ax.text(zx0 + 0.35, band1 - 2.4, f"{STAGE_EN[st['name']]} × {len(st['lanes'])}",
+                    color=FAINT, fontsize=5.4, va="center", zorder=3)
 
         # 货架（空筒库 / 成品库）
         for name, rect in layout.rack_rects().items():
@@ -700,7 +711,9 @@ class Dashboard(Node):
             ax.add_patch(Rectangle((rect[0], rect[1]), rect[2] - rect[0], rect[3] - rect[1],
                                    facecolor="#efece3", edgecolor="#a9a396", lw=0.7,
                                    hatch="////", zorder=1.6))
-            for yy in [rect[1] + 1.2, rect[1] + 3.9, rect[1] + 6.6, rect[1] + 9.3]:
+            _h, _n = rect[3] - rect[1], 5
+            for _k in range(1, _n):
+                yy = rect[1] + _h * _k / _n
                 ax.plot([rect[0], rect[2]], [yy, yy], color="#c6c0b2", lw=0.4, zorder=1.7)
             ax.text(zone["x"], rect[3] + 0.72, zone["cn"], color=INK, fontsize=6.0,
                     fontweight="bold", ha="center", va="center", zorder=3)
@@ -711,19 +724,24 @@ class Dashboard(Node):
         for pt in layout.STORAGE_SLOT_POINTS.values():
             ax.add_patch(Rectangle((pt["x"] - 0.20, pt["y"] - 0.20), 0.40, 0.40, facecolor="none",
                                    edgecolor=STEEL, lw=0.6, ls=(0, (2, 1.6)), zorder=2))
-        ax.add_patch(Rectangle((3.55, 0.35), 3.80, 1.85, facecolor="#eef1f4",
+        _cx = [c["x"] for c in layout.CHARGERS.values()]
+        _cy = [c["y"] for c in layout.CHARGERS.values()]
+        ax.add_patch(Rectangle((min(_cx) - 2.2, min(_cy) - 2.2),
+                               (max(_cx) - min(_cx)) + 4.4, 4.4, facecolor="#eef1f4",
                                edgecolor="#b9c2cb", lw=0.6, zorder=1.5))
-        ax.text(3.72, 1.98, "充电区 CHARGING", color=MUTED, fontsize=4.8, va="center", zorder=3)
+        ax.text(min(_cx) - 2.0, min(_cy) - 1.6, "充电区 CHARGING", color=MUTED,
+                fontsize=5.4, va="center", zorder=3)
         for c in layout.CHARGERS.values():
             ax.add_patch(Rectangle((c["x"] - 0.34, c["y"] - 1.11), 0.68, 0.52,
                                    facecolor="#cfd8e0", edgecolor=INK, lw=0.6, zorder=3))
-        park = layout.park_poses(8)
+        park = layout.park_poses(layout.PARK["n"])
         if park:
             px0 = min(p[0] for p in park) - 0.55
-            px1 = max(p[0] for p in park) + 0.55
-            ax.add_patch(Rectangle((px0, 0.62), px1 - px0, 1.95, facecolor="#f1efe7",
+            px1 = max(p[0] for p in park) + 0.70
+            py0 = min(p[1] for p in park) - 0.95
+            ax.add_patch(Rectangle((px0, py0), px1 - px0, 1.90, facecolor="#f1efe7",
                                    edgecolor="#c6c0b2", lw=0.6, ls=(0, (4, 3)), zorder=1.5))
-            ax.text(px1 - 0.15, 2.72, "待命区 AGV PARK", color=MUTED, fontsize=4.8,
+            ax.text(px1 - 0.15, py0 + 0.22, "待命区 AGV PARK", color=MUTED, fontsize=5.4,
                     ha="right", va="center", zorder=3)
             for p in park:
                 ax.add_patch(Rectangle((p[0] - 0.28, p[1] - 0.34), 0.56, 0.68, facecolor="none",

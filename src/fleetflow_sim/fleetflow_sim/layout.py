@@ -37,7 +37,7 @@ AGV = dict(dia=0.50, height=0.30, wheel_base=0.36, max_v=1.20,
 # 通道与工位间距（改这两个数就能整体调松紧；见文件头注释）
 AISLE = 3.00          # 主通道净宽
 LANE_PITCH = 3.00     # 同排相邻工位间距
-LANES_PER_STAGE = 6   # 每道工序 6 个工位（梳棉 : 并条 : 粗纱 = 6 : 6 : 6）
+LANES_PER_STAGE = 4   # 梳棉 4 个工位；并条/粗纱各 2 个（合计 4:2:2）
 
 # ---------------------------------------------------------------- 机器
 # 真实纺纱设备的占地（公开规格量级）。机器**宽**决定同排工位间距，
@@ -52,15 +52,20 @@ MACHINE_SPEC = {
 # x 是工序流向：储料 → 梳棉 → 并条 → 粗纱 → 成品库。
 # 每段占 15 m（等料位 / 机器 / 完工位），段间留 6.2~9.4 m 的横向通道 ——
 # 车间里本来就有主通道，同时让 3.0 m 的会车余量在两端都留得下。
-_LANE_Y0, _LANE_DY = 22.0, 3.20          # 6 条产线的 y 坐标：22.0 … 38.0
+_LANE_Y0, _LANE_DY = 24.0, 4.00          # 4 条梳棉产线的 y 坐标：24.0 … 36.0
 LANES = [_LANE_Y0 + _LANE_DY * i for i in range(LANES_PER_STAGE)]
+
+# 工位配比 **4 : 2 : 2**（梳棉 : 并条 : 粗纱），沿用旧仓库的配置。
+# 各工序的产线 y 以梳棉带中线对称排布。
+_MID = _LANE_Y0 + _LANE_DY * (LANES_PER_STAGE - 1) / 2.0
+_LANES2 = [_MID - _LANE_DY, _MID + _LANE_DY]      # 并条/粗纱：2 条，分列中线两侧
 
 STAGES = [
     dict(name="carding", cn="梳棉", lanes=list(LANES),
          wait_x=25.00, machine_x=29.00, done_x=33.00, process_s=6.0),
-    dict(name="drawing", cn="并条", lanes=list(LANES[:6]),
+    dict(name="drawing", cn="并条", lanes=list(_LANES2),
          wait_x=42.20, machine_x=45.00, done_x=47.20, process_s=7.5),
-    dict(name="roving",  cn="粗纱", lanes=list(LANES[:6]),
+    dict(name="roving",  cn="粗纱", lanes=list(_LANES2),
          wait_x=56.40, machine_x=60.00, done_x=63.20, process_s=9.0),
 ]
 
@@ -80,7 +85,8 @@ STORAGE = {
     "red":   dict(x=112.00, y=30.0, cn="粗纱成品库", rgb=(0.80, 0.26, 0.28)),
 }
 # 6 个取放位，间距 3.0 m，与产线同高
-STORAGE_SLOT_YS = [_LANE_Y0 + _LANE_DY * i for i in range(6)]
+# 取放位与梳棉产线一一对应（4 个），高度对齐便于直线取放
+STORAGE_SLOT_YS = [_LANE_Y0 + _LANE_DY * i for i in range(LANES_PER_STAGE)]
 STORAGE_SLOTS = {
     "empty": dict(x=10.40, ys=list(STORAGE_SLOT_YS)),
     "red":   dict(x=106.60, ys=list(STORAGE_SLOT_YS)),
