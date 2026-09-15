@@ -260,7 +260,7 @@ threshold, measured with 4 AGVs over 200 s:
 Three further 200 s runs at the default gap also measured zero. The demo above is recorded with the
 default, so it contains no freezes.
 
-![Live dashboard, four AGVs working](assets/readme/live-board-4agv.png)
+![Live dashboard, ten AGVs working](assets/readme/live-board-10agv.png)
 
 *Live board from Gazebo — `web:=true`, then `http://127.0.0.1:8080`; `/stream` and `/map/stream` are multipart streams carrying PNG frames.*
 

@@ -194,7 +194,7 @@ ROS 1 那套从没出现这问题，因为它的机器只有 **0.8×0.8 m**，�
 
 默认净宽下又跑了三次 200 s，同样是零。上面的动图就是用默认布局录的，**全程没有卡死**。
 
-![四台车运行中的实时看板](assets/readme/live-board-4agv.png)
+![十台车运行中的实时看板](assets/readme/live-board-10agv.png)
 
 *Gazebo 实时看板 —— `web:=true` 后打开 `http://127.0.0.1:8080`；`/stream` 与 `/map/stream` 是 multipart 流，载荷为 PNG 帧。*
 
