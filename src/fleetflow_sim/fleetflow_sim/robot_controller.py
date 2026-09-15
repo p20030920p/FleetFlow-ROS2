@@ -61,30 +61,6 @@ def quat_from_yaw(yaw: float):
     return (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5))
 
 
-def _obb_corners(x, y, yaw, hx, hy):
-    c, s = math.cos(yaw), math.sin(yaw)
-    return [(x + c * a - s * b, y + s * a + c * b)
-            for a, b in ((hx, hy), (hx, -hy), (-hx, -hy), (-hx, hy))]
-
-
-def _obb_overlap(A, B) -> bool:
-    """分离轴定理：两个有向矩形是否相交。"""
-    for poly in (A, B):
-        for i in range(4):
-            x1, y1 = poly[i]
-            x2, y2 = poly[(i + 1) % 4]
-            nx, ny = -(y2 - y1), (x2 - x1)
-            n = math.hypot(nx, ny)
-            if n < 1e-9:
-                continue
-            nx, ny = nx / n, ny / n
-            pa = [nx * q[0] + ny * q[1] for q in A]
-            pb = [nx * q[0] + ny * q[1] for q in B]
-            if max(pa) < min(pb) or max(pb) < min(pa):
-                return False
-    return True
-
-
 class RobotController(Node):
     def __init__(self):
         super().__init__("robot_controller")
@@ -1050,18 +1026,16 @@ class RobotController(Node):
         #    结果是车频繁互停、吞吐从 130 单掉到 14 单。
         #    位置和朝向都在 /fleet/robots 里，所以直接用分离轴定理判两个矩形是否相交：
         #    既不会漏掉真碰撞，也不会挡掉合法的并排通行。
+        # 车是 Ø0.50 圆盘，判据就是**圆与圆**：车心距 < 2R + 2×margin 即"贴上"。
+        # 不必再做分离轴 —— 圆的外接方框在四角会误判：两台车心距 0.707·2R 时
+        # 方框已相交，而圆形其实还差 0.35 m，车会被无谓地拦停。
         margin = float(self.get_parameter("avoid_margin_m").value)
-        hx, hy = self.hull_len / 2 + margin, self.hull_wid / 2 + margin
-        me = _obb_corners(self.x, self.y, self.yaw, hx, hy)
+        reach = 2.0 * self.hull_r + 2.0 * margin
         for rid, p in self.peers.items():
             if rid == self.rid:
                 continue
             d = math.hypot(p.x - self.x, p.y - self.y)
-            close = d < self.hull_diag + 2 * margin      # 粗筛，省掉绝大多数 SAT 计算
-            if close and _obb_overlap(me, _obb_corners(p.x, p.y, p.yaw, hx, hy)):
-                hard = True
-            else:
-                hard = False
+            hard = d < reach
             if hard or d < 1e-6:
                 # 轮廓已经相交。这里必须给**被挡住的那台**一条出路，否则两台车
                 # 会互相僵住。原来只有"id 小的一律沿自身朝向挪"这一条，

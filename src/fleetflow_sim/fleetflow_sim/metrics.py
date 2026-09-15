@@ -39,7 +39,7 @@ RUN_FIELDS = ["run_label", "policy", "num_robots", "wall_s", "makespan_s", "comp
               "min_robot_distance_m", "near_miss_events", "charging_events", "reassignments",
               # 轮廓净距与真实重叠次数：车心距在密集车队里没有安全含义（两车并排
               # 车心距本来就只有 0.44 m），新增这两列才是可与控制器判据对照的指标。
-              "min_robot_gap_m", "overlap_events",
+              "min_robot_gap_m", "overlap_events", "worst_pair",
               "dup_target_ticks", "dup_target_events"]
 
 
@@ -185,6 +185,13 @@ class MetricsRecorder(Node):
                 gap = circle_gap((a.x, a.y), (b.x, b.y))
                 if gap < self.min_gap:
                     self.min_gap = gap
+                # 记录最差的一对（排障用）：重叠发生在哪两台车、什么状态
+                if gap < getattr(self, "_worst_gap", 1e9):
+                    self._worst_gap = gap
+                    self._worst_pair = (
+                        f"R{ids[i]}({a.state}) vs R{ids[j]}({b.state}) "
+                        f"gap={gap:.3f} "
+                        f"A=({a.x:.2f},{a.y:.2f}) B=({b.x:.2f},{b.y:.2f})")
                 key = (ids[i], ids[j])
                 if gap < 0.0:
                     if key not in self._in_near:      # 只在开始重叠那一刻计一次
@@ -238,6 +245,7 @@ class MetricsRecorder(Node):
             near_miss_events=self.near_misses,
             min_robot_gap_m=round(self.min_gap, 3) if self.min_gap < 1e8 else "",
             overlap_events=self.overlaps,
+            worst_pair=getattr(self, "_worst_pair", ""),
             dup_target_ticks=self.dup_target_ticks,
             dup_target_events=self.dup_target_events,
             charging_events=self.charging, reassignments=self.reassign,
