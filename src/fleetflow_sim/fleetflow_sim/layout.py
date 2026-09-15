@@ -203,25 +203,11 @@ def bootstrap() -> int:
 def world_bounds() -> tuple[float, float, float, float]:
     """厂房在世界里的可视边界 (x_min, x_max, y_min, y_max)。
 
-    **必须由布局推导，不能写死。** 画图（dashboard / live_view）原先硬编码
-    `xlim = -0.25 … 26.25`、地面矩形 26×16，而工序净宽改成 2.0 m 之后
-    红料库移到了 x≈28 —— 于是货架被画到地图框外，压住了右侧面板。
-    这类"布局一改、绘图就错位"的问题只有让两边共用同一份推导才能根除。
+    直接用厂房外形（`BUILDING`），**不再由工位包络推算** —— 推算出来的只是
+    "工位覆盖到哪"，不是厂房边界，会让渲染器把 120×60 m 的厂房画成 114×16 m，
+    平面图随之被压扁、与真实比例不符。
     """
-    rack_half = RACK["depth"] / 2
-    x_min = min(0.0, STORAGE["empty"]["x"] - RACK["w"])
-    x_max = max(s["done_x"] for s in STAGES)
-    x_max = max(x_max, STORAGE["red"]["x"] + rack_half)
-    for pt in STORAGE_SLOT_POINTS.values():
-        x_max = max(x_max, pt["x"])
-        x_min = min(x_min, pt["x"])
-    y_min, y_max = 0.0, 16.0
-    out = (x_min, x_max + 0.6, y_min, y_max)
-    # 同步 BUILDING.w：渲染器的像素缩放依赖它，二者必须一致
-    BUILDING["w"] = out[1] - out[0]
-    return out
-
-
+    return 0.0, BUILDING["w"], 0.0, BUILDING["h"]
 
 def machine_rect(stage: str, lane: int):
     """某台机器的占地矩形 (x0, y0, x1, y1)。"""
